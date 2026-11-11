@@ -424,12 +424,13 @@ function customerLabel(id){const c=(liveCustomers||[]).find(x=>String(x.id)===St
 async function loadLiveSales(){
   const target=$('#live-sales-table');if(!target)return;
   target.textContent='Loading sales…';
+  if(!liveCustomers?.length) await refreshLiveCustomers();
   const {data,error}=await db.from('sales').select('*').eq('shop_id',currentShop.id).order('sold_at',{ascending:false});
   if(error){target.innerHTML='<div class="notice">Could not load sales: '+safeText(error.message)+'</div>';return;}
   liveSales=data||[];
   const pending=liveSales.filter(s=>s.status==='pending_approval');
   $('#pending-count').textContent=pending.length+' awaiting approval';
-  $('#pending-credit-list').innerHTML=pending.length?pending.map(s=>'<div class="cartline"><div><b>'+safeText(saleLabel(s))+'</b><div class="muted">'+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</div></div><button class="primary" onclick="approveCreditSale(\''+safeText(s.id)+'\')">Approve</button></div>').join(''):'<div class="empty">No credit sales awaiting approval.</div>';
+  $('#pending-credit-list').innerHTML=pending.length?pending.map(s=>'<div class="cartline"><div><b>'+safeText(saleLabel(s))+'</b><div class="muted">'+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</div></div><div><button class="primary" onclick="approveCreditSale(\\''+safeText(s.id)+'\\')">Approve</button> <button class="danger" onclick="rejectCreditSale(\\''+safeText(s.id)+'\\')">Reject</button></div></div>').join(''):'<div class="empty">No credit sales awaiting approval.</div>';
   const outstanding=liveSales.filter(s=>s.payment_method==='credit'&&s.status==='completed'&&s.payment_status!=='paid');
   const select=$('#repayment-sale');
   if(select)select.innerHTML='<option value="">Select an outstanding credit sale</option>'+outstanding.map(s=>'<option value="'+safeText(s.id)+'">'+safeText(saleLabel(s))+' · '+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+' · '+safeText(s.payment_status||'unpaid')+'</option>').join('');
@@ -440,7 +441,10 @@ function filterLiveSales(){
   const q=($('#sales-search')?.value||'').toLowerCase();
   const rows=liveSales.filter(s=>(String(saleLabel(s))+' '+customerLabel(s.customer_id)+' '+String(s.status)+' '+String(s.payment_status||'')).toLowerCase().includes(q));
   $('#sales-count').textContent=rows.length+' transactions';
-  target.innerHTML=rows.length?'<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Total</th><th>Sale status</th><th>Payment</th></tr></thead><tbody>'+rows.map(s=>'<tr><td><b>'+safeText(saleLabel(s))+'</b></td><td>'+safeText(customerLabel(s.customer_id))+'</td><td>'+safeText(s.sold_at?new Date(s.sold_at).toLocaleString():'—')+'</td><td><b>'+money(Number(s.total||0))+'</b></td><td><span class="badge '+(s.status==='pending_approval'?'warn':'')+'">'+safeText(s.status||'—')+'</span></td><td>'+safeText(s.payment_status||s.payment_method||'—')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No matching transactions.</div>';
+  target.innerHTML=rows.length?'<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Total</th><th>Sale status</th><th>Payment</th><th>Actions</th></tr></thead><tbody>'+rows.map(s=>{
+    const action=s.status==='completed'?'<button class="danger" onclick="voidSale(\\''+safeText(s.id)+'\\')">Cancel / refund</button>':s.status==='pending_approval'?'<button class="danger" onclick="rejectCreditSale(\\''+safeText(s.id)+'\\')">Reject</button>':'—';
+    return '<tr><td><b>'+safeText(saleLabel(s))+'</b></td><td>'+safeText(customerLabel(s.customer_id))+'</td><td>'+safeText(s.sold_at?new Date(s.sold_at).toLocaleString():'—')+'</td><td><b>'+money(Number(s.total||0))+'</b></td><td><span class="badge '+(s.status==='pending_approval'?'warn':'')+'">'+safeText(s.status||'—')+'</span></td><td>'+safeText(s.payment_status||s.payment_method||'—')+'</td><td>'+action+'</td></tr>';
+  }).join('')+'</tbody></table>':'<div class="empty">No matching transactions.</div>';
 }
 async function approveCreditSale(id){
   if(!confirm('Approve this credit sale? Stock will be deducted now.'))return;
@@ -448,6 +452,36 @@ async function approveCreditSale(id){
   if(error){toast('Approval failed: '+error.message);return;}
   toast('Credit sale approved and stock deducted.');await loadLiveSales();await refreshPOSProducts();
 }
+async function rejectCreditSale(id){
+  const reason=prompt('Reason for rejecting this credit request:','Credit request declined');
+  if(reason===null)return;
+  if(!reason.trim()){toast('A rejection reason is required.');return;}
+  const {error}=await db.rpc('reject_credit_sale',{p_sale_id:id,p_reason:reason.trim()});
+  if(error){toast('Could not reject credit sale: '+error.message);return;}
+  toast('Credit request rejected.');await loadLiveSales();
+}
+async function voidSale(id){
+  const sale=liveSales.find(x=>String(x.id)===String(id));
+  if(!sale||sale.status!=='completed'){toast('Only completed sales can be cancelled.');return;}
+  let refundConfirmed=false;
+  if(sale.payment_method==='cash'||sale.payment_method==='card'){
+    refundConfirmed=confirm('IMPORTANT: Has the customer already received the full refund outside this system?\n\nChoose OK only after the refund has actually been completed. This action restores stock and marks the sale voided; it does not transfer money.');
+    if(!refundConfirmed)return;
+  }else{
+    if(sale.payment_status==='paid'||sale.payment_status==='partial'){
+      toast('This credit sale has repayments. Resolve or reverse those payments before cancelling it.');
+      return;
+    }
+    if(!confirm('Cancel this unpaid credit sale and return its items to stock?'))return;
+  }
+  const reason=prompt('Reason for cancelling this sale:','Sale cancelled');
+  if(reason===null)return;
+  if(!reason.trim()){toast('A cancellation reason is required.');return;}
+  const {error}=await db.rpc('void_sale',{p_sale_id:id,p_reason:reason.trim(),p_refund_confirmed:refundConfirmed});
+  if(error){toast('Cancellation failed: '+error.message);return;}
+  toast('Sale cancelled and stock restored.');await loadLiveSales();await refreshPOSProducts();await refreshLiveInventory();
+}
+
 async function submitRepayment(){
   const id=$('#repayment-sale')?.value,amount=Number($('#repayment-amount')?.value),method=$('#repayment-method')?.value;
   const message=$('#repayment-message');
