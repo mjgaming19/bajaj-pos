@@ -97,7 +97,7 @@ async function initializeApp() {
 
 async function loadLiveInventory() {
   const { data, error } = await db.from('products')
-    .select('id,product_code,product_name,category,quantity,cost_price,selling_price')
+    .select('id,product_code,product_name,category,quantity,cost_price,selling_price,low_stock_threshold')
     .eq('shop_id', currentShop.id)
     .order('product_name');
   if (error) throw error;
@@ -116,7 +116,7 @@ function liveInventoryMarkup(rows) {
     rows.map(p => '<tr><td><b>' + safeText(p.product_name) + '</b></td><td>' + safeText(p.product_code) +
     '</td><td>' + safeText(p.category || '—') + '</td><td>' + money(Number(p.cost_price || 0)) +
     '</td><td><b>' + money(Number(p.selling_price || 0)) + '</b></td><td><span class="badge ' +
-    (Number(p.quantity || 0) < 10 ? 'warn' : '') + '">' + Number(p.quantity || 0) +
+    (Number(p.quantity || 0) <= Number(p.low_stock_threshold ?? 5) ? 'warn' : '') + '">' + Number(p.quantity || 0) +
     '</span></td><td><button class="secondary" onclick="editLiveProduct(\'' + safeText(p.id) + '\')">Edit</button> <button class="danger" onclick="deleteLiveProduct(\'' + safeText(p.id) + '\')">Delete</button></td></tr>').join('') +
     '</tbody></table></div>';
 }
@@ -132,10 +132,11 @@ async function addLiveProduct(event) {
     product_name: values.product_name.trim(),
     category: values.category.trim() || null,
     quantity: Number(values.quantity),
+    low_stock_threshold: Number(values.low_stock_threshold || 5),
     cost_price: Number(values.cost_price),
     selling_price: Number(values.selling_price)
   };
-  if (!payload.product_code || !payload.product_name || !Number.isFinite(payload.quantity) || payload.quantity < 0 || !Number.isFinite(payload.cost_price) || payload.cost_price < 0 || !Number.isFinite(payload.selling_price) || payload.selling_price < 0) {
+  if (!payload.product_code || !payload.product_name || !Number.isFinite(payload.quantity) || payload.quantity < 0 || !Number.isInteger(payload.low_stock_threshold) || payload.low_stock_threshold < 0 || !Number.isFinite(payload.cost_price) || payload.cost_price < 0 || !Number.isFinite(payload.selling_price) || payload.selling_price < 0) {
     message.textContent = 'Please enter valid product details and non-negative numbers.';
     return;
   }
@@ -155,13 +156,29 @@ async function editLiveProduct(id) {
   const product_code = prompt('Product code:', product.product_code || ''); if (product_code === null) return;
   const product_name = prompt('Product name:', product.product_name || ''); if (product_name === null) return;
   const category = prompt('Category:', product.category || ''); if (category === null) return;
-  const quantity = prompt('Quantity:', product.quantity ?? 0); if (quantity === null) return;
+  const low_stock_threshold = prompt('Low-stock alert threshold:', product.low_stock_threshold ?? 5); if (low_stock_threshold === null) return;
   const cost_price = prompt('Cost price (LKR):', product.cost_price ?? 0); if (cost_price === null) return;
   const selling_price = prompt('Selling price (LKR):', product.selling_price ?? 0); if (selling_price === null) return;
-  const update = { product_code: product_code.trim(), product_name: product_name.trim(), category: category.trim() || null, quantity: Number(quantity), cost_price: Number(cost_price), selling_price: Number(selling_price) };
-  if (!update.product_code || !update.product_name || !Number.isFinite(update.quantity) || update.quantity < 0 || !Number.isFinite(update.cost_price) || update.cost_price < 0 || !Number.isFinite(update.selling_price) || update.selling_price < 0) { alert('Please enter valid product details and non-negative numbers.'); return; }
+  const update = { product_code: product_code.trim(), product_name: product_name.trim(), category: category.trim() || null, low_stock_threshold: Number(low_stock_threshold), cost_price: Number(cost_price), selling_price: Number(selling_price) };
+  if (!update.product_code || !update.product_name || !Number.isInteger(update.low_stock_threshold) || update.low_stock_threshold < 0 || !Number.isFinite(update.cost_price) || update.cost_price < 0 || !Number.isFinite(update.selling_price) || update.selling_price < 0) { alert('Please enter valid details and non-negative prices and threshold.'); return; }
   const { error } = await db.from('products').update(update).eq('id', id).eq('shop_id', currentShop.id);
   if (error) { alert('Could not update product: ' + error.message); return; }
+  toast('Product details updated.'); await refreshLiveInventory();
+}
+
+async function adjustLiveStock(id) {
+  const { data: product, error } = await db.from('products').select('id,product_name,quantity').eq('id', id).eq('shop_id', currentShop.id).single();
+  if (error) { alert('Could not load product: ' + error.message); return; }
+  const raw = prompt('Stock change for ' + product.product_name + ' (use + to add, - to remove):', '0');
+  if (raw === null) return;
+  const quantity_change = Number(raw);
+  if (!Number.isInteger(quantity_change) || quantity_change === 0) { alert('Enter a non-zero whole number, such as 5 or -2.'); return; }
+  const reason = prompt('Reason for this stock adjustment (required):', 'Stock count correction');
+  if (reason === null) return;
+  if (!reason.trim()) { alert('A reason is required.'); return; }
+  const { data: result, error: rpcError } = await db.rpc('adjust_stock', { p_product_id: id, p_quantity_change: quantity_change, p_reason: reason.trim() });
+  if (rpcError) { alert('Stock adjustment failed: ' + rpcError.message); return; }
+  toast('Stock adjusted. New quantity: ' + (result?.new_quantity ?? 'updated'));
   await refreshLiveInventory();
 }
 
@@ -178,7 +195,11 @@ async function refreshLiveInventory() {
   target.innerHTML = '<p class="muted">Loading live inventory…</p>';
   try {
     const rows = await loadLiveInventory();
+    cachedLiveInventory = rows;
     target.innerHTML = liveInventoryMarkup(rows);
+    const low = rows.filter(p => Number(p.quantity || 0) <= Number(p.low_stock_threshold ?? 5));
+    const lowHost = document.querySelector('#live-low-stock');
+    if (lowHost) lowHost.innerHTML = low.length ? '<div class="notice"><b>' + low.length + ' low-stock product(s).</b> ' + low.slice(0,5).map(p => safeText(p.product_name) + ' (' + Number(p.quantity||0) + ')').join(' · ') + (low.length>5?' · and more':'') + '</div>' : '<div class="notice">All products are above their low-stock thresholds.</div>';
     const count = document.querySelector('#live-product-count');
     if (count) count.textContent = rows.length;
   } catch (error) {
@@ -200,7 +221,7 @@ async function verifyWorkspace() {
   currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
   document.body.classList.add('authenticated');
-  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','customers','sales','suppliers'].includes(b.dataset.page); });
+  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','inventory','customers','sales','suppliers','reports'].includes(b.dataset.page); });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
@@ -208,7 +229,7 @@ async function verifyWorkspace() {
     heading('LIVE WORKSPACE', 'Welcome to BAJAJ', 'Your Main Admin account is connected to the live database.', '<button class="primary" onclick="page(&quot;pos&quot;)">Open Point of Sale →</button>') +
     '<div class="stats"><div class="stat"><div class="stathead">Inventory products</div><strong id="live-product-count">—</strong><small class="muted">Live database count</small></div><div class="stat"><div class="stathead">Shop</div><strong>' + safeText(currentShop.name) + '</strong><small class="muted">Workspace connected</small></div></div>' +
     '<div class="card"><div class="cardhead"><h3>Live inventory</h3><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div><div id="live-inventory"><p class="muted">Loading live inventory…</p></div></div>' +
-    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add a spare part</h3><span>Saved directly to Supabase</span></div><form id="new-product-form" class="formrow" style="align-items:end"><div class="field"><label>Product code</label><input name="product_code" required placeholder="e.g. BAJ-001"></div><div class="field"><label>Product name</label><input name="product_name" required placeholder="e.g. Brake Shoe Set"></div><div class="field"><label>Category</label><input name="category" placeholder="e.g. Brakes"></div><div class="field"><label>Quantity</label><input name="quantity" type="number" min="0" step="1" value="0" required></div><div class="field"><label>Cost price (LKR)</label><input name="cost_price" type="number" min="0" step="0.01" required></div><div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" required></div><button class="primary" type="submit">＋ Save product</button></form><div id="product-form-message" class="muted" style="font-size:12px;margin-top:8px"></div></div>' +
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add a spare part</h3><span>Saved directly to Supabase</span></div><form id="new-product-form" class="formrow" style="align-items:end"><div class="field"><label>Product code</label><input name="product_code" required placeholder="e.g. BAJ-001"></div><div class="field"><label>Product name</label><input name="product_name" required placeholder="e.g. Brake Shoe Set"></div><div class="field"><label>Category</label><input name="category" placeholder="e.g. Brakes"></div><div class="field"><label>Opening quantity</label><input name="quantity" type="number" min="0" step="1" value="0" required></div><div class="field"><label>Low-stock alert at</label><input name="low_stock_threshold" type="number" min="0" step="1" value="5"></div><div class="field"><label>Cost price (LKR)</label><input name="cost_price" type="number" min="0" step="0.01" required></div><div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" required></div><button class="primary" type="submit">＋ Save product</button></form><div id="product-form-message" class="muted" style="font-size:12px;margin-top:8px"></div></div>' +
     '<p class="muted" style="font-size:11px">Inventory records are read from and saved to the BAJAJ Supabase database.</p>';
   await refreshLiveInventory();
   document.querySelector('#new-product-form').addEventListener('submit', addLiveProduct);
@@ -266,7 +287,30 @@ ${products.filter(p=>p.qty<10).map(p=>`<div class="cartline"><div><b>${p.part}</
 <div style="margin-top:14px"><button class="secondary" onclick="page('inventory')">View inventory →</button></div></div></div>
 <div class="card" style="margin-top:17px"><div class="cardhead"><h3>Recent transactions</h3><button class="secondary" onclick="page('sales')">View all</button></div>${salesTable(sales.slice(0,3))}</div>`}
 function salesTable(rows){return `<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>${rows.map(s=>`<tr><td><b>${s.id}</b></td><td>${s.customer}</td><td class="muted">${s.date}</td><td><b>${money(s.total)}</b></td><td><span class="badge ${s.status==='Credit'?'warn':''}">${s.status}</span></td></tr>`).join('')}</tbody></table>`}
-function inventory(){ $('#view').innerHTML=heading('STOCK CONTROL','Inventory','Manage Bajaj spare parts, part numbers, prices and stock levels.','<button class="primary" onclick="addProduct()">＋ Add product</button>')+`<div class="toolbar"><input class="search" id="invsearch" placeholder="Search product, code or part number…" oninput="filterInventory()"><button class="secondary" onclick="toast('CSV import will be connected in the full build.')">Import CSV</button><button class="secondary" onclick="toast('Demo inventory export prepared.')">Export</button></div><div class="card tablecard" id="invtable">${inventoryTable(products)}</div>`}
+async function inventory(){
+  $('#view').innerHTML=heading('STOCK CONTROL','Inventory','Live stock levels, product details and recorded stock adjustments.')+
+  '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Add a spare part</h3><span>Opening stock is recorded at creation</span></div>'+
+  '<form id="product-form" class="formrow" style="align-items:end">'+
+  '<div class="field"><label>Product code</label><input name="product_code" required maxlength="80"></div>'+
+  '<div class="field"><label>Product name</label><input name="product_name" required maxlength="180"></div>'+
+  '<div class="field"><label>Category</label><input name="category" maxlength="100"></div>'+
+  '<div class="field"><label>Opening quantity</label><input name="quantity" type="number" min="0" step="1" value="0" required></div>'+
+  '<div class="field"><label>Low-stock alert at</label><input name="low_stock_threshold" type="number" min="0" step="1" value="5"></div>'+
+  '<div class="field"><label>Cost price (LKR)</label><input name="cost_price" type="number" min="0" step="0.01" value="0" required></div>'+
+  '<div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" value="0" required></div>'+
+  '<button class="primary" type="submit">＋ Save product</button></form><div id="product-form-message" class="muted"></div></div>'+
+  '<div class="toolbar"><input class="search" id="inventory-search-live" placeholder="Search product, code or category…" oninput="filterLiveInventory()"><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div>'+
+  '<div class="card"><div class="cardhead"><h3>Live inventory</h3><span id="live-product-count">Loading…</span></div><div id="live-low-stock"></div><div id="live-inventory">Loading inventory…</div></div>';
+  await refreshLiveInventory();
+  $('#product-form').addEventListener('submit',addLiveProduct);
+}
+let cachedLiveInventory=[];
+function filterLiveInventory(){
+  const q=($('#inventory-search-live')?.value||'').trim().toLowerCase();
+  const rows=cachedLiveInventory.filter(p=>(String(p.product_name||'')+' '+String(p.product_code||'')+' '+String(p.category||'')).toLowerCase().includes(q));
+  const target=$('#live-inventory');if(target)target.innerHTML=liveInventoryMarkup(rows);
+}
+
 function inventoryTable(rows){return `<table><thead><tr><th>Product</th><th>Product code</th><th>Part number</th><th>Category</th><th>Cost</th><th>Selling price</th><th>Stock</th></tr></thead><tbody>${rows.map(p=>`<tr><td><b>${p.part}</b></td><td>${p.code}</td><td class="muted">${p.oem}</td><td>${p.category}</td><td>${money(p.cost)}</td><td><b>${money(p.price)}</b></td><td><span class="badge ${p.qty<10?'warn':''}">${p.qty}</span></td></tr>`).join('')}</tbody></table>`}
 function filterInventory(){let q=$('#invsearch').value.toLowerCase();$('#invtable').innerHTML=inventoryTable(products.filter(p=>(p.part+p.code+p.oem+p.category).toLowerCase().includes(q)))}
 function addProduct(){let name=prompt('Product name');if(!name)return;let code='BAJ-'+String(products.length+1).padStart(3,'0');products.push({id:Date.now(),code,part:name,oem:'—',category:'General',price:0,cost:0,qty:0,icon:'⚙'});inventory()}
@@ -574,7 +618,38 @@ async function receivePurchase(id){
   toast('Stock received: '+(data?.quantity_received||0)+' units.');
   await loadSupplierData();showSupplierTab('purchases');await refreshLiveInventory();
 }
-function reportsPage(){ $('#view').innerHTML=heading('BUSINESS INSIGHTS','Reports','Sales, gross profit, stock value and outstanding credit.')+`<div class="stats"><div class="stat"><div class="stathead">Gross sales</div><strong>${money(284500)}</strong><small class="muted">Demo period</small></div><div class="stat"><div class="stathead">Estimated gross profit</div><strong>${money(68400)}</strong><small class="muted">Based on sample costs</small></div><div class="stat"><div class="stathead">Stock value (cost)</div><strong>${money(1250000)}</strong><small class="muted">Sample figure</small></div><div class="stat"><div class="stathead">Credit outstanding</div><strong>${money(customers.reduce((a,c)=>a+c.balance,0))}</strong><small class="muted">Sample figure</small></div></div><div class="notice">These are illustrative demo figures. Live reports will calculate from actual shop transactions.</div><div class="card"><h3>Report sections</h3><p class="muted">Daily sales · Monthly sales · Product performance · Gross profit · Stock movement · Customer balances · Payment methods</p></div>`}
+async function reportsPage(){
+  $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Figures are calculated from BAJAJ transactions and current inventory.')+
+  '<div class="notice">Sales value includes completed sales (including approved credit sales). Pending credit requests are excluded. Profit is not shown until cost-at-sale is recorded reliably.</div>'+
+  '<div id="live-report-content"><p class="muted">Calculating live reports…</p></div>';
+  const [salesResult,productsResult]=await Promise.all([
+    db.from('sales').select('id,total,status,sold_at,payment_method,payment_status').eq('shop_id',currentShop.id),
+    loadLiveInventory()
+  ]);
+  const host=$('#live-report-content');if(!host)return;
+  if(salesResult.error){host.innerHTML='<div class="notice">Could not load sales reports: '+safeText(salesResult.error.message)+'</div>';return;}
+  const sales=salesResult.data||[],products=productsResult||[];
+  const completed=sales.filter(x=>x.status==='completed');
+  const todayKey=new Date().toLocaleDateString();
+  const today=completed.filter(x=>x.sold_at&&new Date(x.sold_at).toLocaleDateString()===todayKey);
+  const total=arr=>arr.reduce((sum,x)=>sum+Number(x.total||0),0);
+  const stockValue=products.reduce((sum,p)=>sum+Number(p.quantity||0)*Number(p.cost_price||0),0);
+  const low=products.filter(p=>Number(p.quantity||0)<=Number(p.low_stock_threshold??5));
+  const pending=sales.filter(x=>x.status==='pending_approval');
+  const credit=completed.filter(x=>x.payment_method==='credit'&&x.payment_status!=='paid');
+  const methods=['cash','card','credit'].map(method=>({method,count:completed.filter(x=>x.payment_method===method).length,value:total(completed.filter(x=>x.payment_method===method))}));
+  host.innerHTML='<div class="stats">'+
+    '<div class="stat"><div class="stathead">Today’s completed sales</div><strong>'+money(total(today))+'</strong><small class="muted">'+today.length+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">All-time completed sales</div><strong>'+money(total(completed))+'</strong><small class="muted">'+completed.length+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Stock value at cost</div><strong>'+money(stockValue)+'</strong><small class="muted">'+products.length+' products</small></div>'+
+    '<div class="stat"><div class="stathead">Low-stock products</div><strong>'+low.length+'</strong><small class="muted">At or below alert threshold</small></div></div>'+
+    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment method breakdown</h3><span>Completed sales</span></div>'+
+    '<table><thead><tr><th>Method</th><th>Transactions</th><th>Sales value</th></tr></thead><tbody>'+methods.map(m=>'<tr><td>'+safeText(m.method.toUpperCase())+'</td><td>'+m.count+'</td><td>'+money(m.value)+'</td></tr>').join('')+'</tbody></table></div>'+
+    '<div class="card"><div class="cardhead"><h3>Credit & approvals</h3></div><div class="cartline"><span>Credit sales awaiting approval</span><b>'+pending.length+'</b></div><div class="cartline"><span>Approved credit sales not marked paid</span><b>'+credit.length+'</b></div><p class="muted">These are sale counts, not remaining balances.</p></div></div>'+
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Low-stock watchlist</h3><span>'+low.length+' products</span></div>'+
+    (low.length?'<div class="tablecard"><table><thead><tr><th>Product</th><th>Code</th><th>In stock</th><th>Alert at</th></tr></thead><tbody>'+low.map(p=>'<tr><td><b>'+safeText(p.product_name)+'</b></td><td>'+safeText(p.product_code)+'</td><td><span class="badge warn">'+Number(p.quantity||0)+'</span></td><td>'+Number(p.low_stock_threshold??5)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No products are currently below their alert threshold.</div>')+'</div>';
+}
+
 function usersPage(){ $('#view').innerHTML=heading('ACCESS CONTROL','User management','Three permission levels, with you as the platform owner.')+`<div class="grid2"><div class="card"><div class="cardhead"><h3>Platform owner</h3><span class="badge blue">You</span></div><h2>Main Admin</h2><p class="muted">Cross-shop platform access, shop management and system oversight.</p></div><div class="card"><div class="cardhead"><h3>Shop access roles</h3></div><div class="cartline"><b>Sub-admin</b><span class="badge">Shop manager</span></div><div class="cartline"><b>POS user</b><span class="badge warn">Cashier</span></div><p class="muted">Role permissions will be enforced by the secure backend in the production version.</p></div></div><div class="notice" style="margin-top:16px">Demo login is visual only. Real authentication, invitations and audit logs are not connected yet.</div>`}
 function settingsPage(){ $('#view').innerHTML=heading('PREFERENCES','Settings','Configure the BAJAJ workspace.')+`<div class="card"><h3>Business profile</h3><div class="formrow"><div class="field"><label>Business display name</label><input value="BAJAJ"></div><div class="field"><label>Currency</label><input value="LKR — Sri Lankan Rupee" disabled></div><div class="field"><label>Receipt prefix</label><input value="BAJ"></div><div class="field"><label>Theme</label><input value="Dark / Light" disabled></div></div><button class="primary" onclick="toast('Settings are demo-only for now.')">Save changes</button></div><div class="card" style="margin-top:15px"><h3>Hardware compatibility</h3><p class="muted">USB barcode scanner · ESC/POS thermal receipt printer · PDF receipt export · WhatsApp sharing (production integration)</p></div>`}
 initializeApp();
