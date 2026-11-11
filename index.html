@@ -117,7 +117,7 @@ function liveInventoryMarkup(rows) {
     '</td><td>' + safeText(p.category || '—') + '</td><td>' + money(Number(p.cost_price || 0)) +
     '</td><td><b>' + money(Number(p.selling_price || 0)) + '</b></td><td><span class="badge ' +
     (Number(p.quantity || 0) <= Number(p.low_stock_threshold ?? 5) ? 'warn' : '') + '">' + Number(p.quantity || 0) +
-    '</span></td><td><button class="secondary" onclick="editLiveProduct(\'' + safeText(p.id) + '\')">Edit</button> <button class="danger" onclick="deleteLiveProduct(\'' + safeText(p.id) + '\')">Delete</button></td></tr>').join('') +
+    '</span></td><td><button class="secondary" onclick="editLiveProduct(\'' + safeText(p.id) + '\')">Edit details</button> <button class="secondary" onclick="adjustLiveStock(\\'' + safeText(p.id) + '\\')">Adjust stock</button> <button class="danger" onclick="deleteLiveProduct(\'' + safeText(p.id) + '\')">Delete</button></td></tr>').join('') +
     '</tbody></table></div>';
 }
 
