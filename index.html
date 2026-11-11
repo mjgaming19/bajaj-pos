@@ -95,6 +95,45 @@ async function initializeApp() {
   await verifyWorkspace();
 }
 
+async function loadLiveInventory() {
+  const { data, error } = await db.from('products')
+    .select('id,product_code,product_name,category,quantity,cost_price,selling_price')
+    .eq('shop_id', currentShop.id)
+    .order('product_name');
+  if (error) throw error;
+  return data || [];
+}
+
+function safeText(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[ch]));
+}
+
+function liveInventoryMarkup(rows) {
+  if (!rows.length) return '<div class="empty">No products yet. Your BAJAJ inventory is ready for its first product.</div>';
+  return '<div class="tablecard"><table><thead><tr><th>Product</th><th>Product code</th><th>Category</th><th>Cost price</th><th>Selling price</th><th>Quantity</th></tr></thead><tbody>' +
+    rows.map(p => '<tr><td><b>' + safeText(p.product_name) + '</b></td><td>' + safeText(p.product_code) +
+    '</td><td>' + safeText(p.category || '—') + '</td><td>' + money(Number(p.cost_price || 0)) +
+    '</td><td><b>' + money(Number(p.selling_price || 0)) + '</b></td><td><span class="badge ' +
+    (Number(p.quantity || 0) < 10 ? 'warn' : '') + '">' + Number(p.quantity || 0) + '</span></td></tr>').join('') +
+    '</tbody></table></div>';
+}
+
+async function refreshLiveInventory() {
+  const target = document.querySelector('#live-inventory');
+  if (!target) return;
+  target.innerHTML = '<p class="muted">Loading live inventory…</p>';
+  try {
+    const rows = await loadLiveInventory();
+    target.innerHTML = liveInventoryMarkup(rows);
+    const count = document.querySelector('#live-product-count');
+    if (count) count.textContent = rows.length;
+  } catch (error) {
+    target.innerHTML = '<div class="notice">Could not load inventory: ' + safeText(error.message) + '</div>';
+  }
+}
+
 async function verifyWorkspace() {
   const { data: admin, error: adminError } = await db.from('platform_admins')
     .select('user_id').eq('user_id', currentUser.id).maybeSingle();
@@ -112,8 +151,12 @@ async function verifyWorkspace() {
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
-  document.querySelector('#view').innerHTML = heading('DATABASE CONNECTED', 'Welcome to BAJAJ', 'Your Main Admin account has signed in successfully.') +
-    '<div class="card"><h3>Secure connection established</h3><p class="muted">Your account is authenticated and the BAJAJ shop is available. We are now ready to connect inventory, checkout, customers and reporting to live records.</p><div class="notice">Connection stage only: the existing demo screens still contain sample data. Do not use them for real sales until the live modules are connected.</div><p><b>Shop:</b> ' + currentShop.name + '</p><p><b>Currency:</b> ' + currentShop.currency + '</p><p><b>Signed in as:</b> ' + (currentUser.email || currentUser.id) + '</p></div>';
+  document.querySelector('#view').innerHTML =
+    heading('LIVE WORKSPACE', 'Welcome to BAJAJ', 'Your Main Admin account is connected to the live database.') +
+    '<div class="stats"><div class="stat"><div class="stathead">Inventory products</div><strong id="live-product-count">—</strong><small class="muted">Live database count</small></div><div class="stat"><div class="stathead">Shop</div><strong>' + safeText(currentShop.name) + '</strong><small class="muted">Workspace connected</small></div></div>' +
+    '<div class="card"><div class="cardhead"><h3>Live inventory</h3><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div><div id="live-inventory"><p class="muted">Loading live inventory…</p></div></div>' +
+    '<p class="muted" style="font-size:11px">This view reads product records directly from Supabase. Demo checkout and sample-data modules remain disabled until their live database versions are ready.</p>';
+  await refreshLiveInventory();
 }
 
 document.querySelector('#login-form').addEventListener('submit', async (event) => {
