@@ -87,6 +87,8 @@ const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_PJKiTDpngevBjZyXI9fZCg_dLIBYCKh
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let currentUser = null;
 let currentShop = null;
+let currentUserRole = 'pos_user';
+let isPlatformAdmin = false;
 
 async function initializeApp() {
   const { data, error } = await db.auth.getSession();
@@ -209,31 +211,36 @@ async function refreshLiveInventory() {
 }
 
 async function verifyWorkspace() {
-  const { data: admin, error: adminError } = await db.from('platform_admins')
-    .select('user_id').eq('user_id', currentUser.id).maybeSingle();
-  if (adminError) { document.querySelector('#auth-error').textContent = adminError.message; return; }
-  if (!admin) {
-    await db.auth.signOut();
-    document.querySelector('#auth-error').textContent = 'This account is not registered as a platform administrator.';
-    return;
+  const errorBox = document.querySelector('#auth-error');
+  const { data: admin, error: adminError } = await db.from('platform_admins').select('user_id').eq('user_id', currentUser.id).maybeSingle();
+  if (adminError) { errorBox.textContent = adminError.message; return; }
+  isPlatformAdmin = !!admin;
+  let shops = [];
+  if (isPlatformAdmin) {
+    const { data, error } = await db.from('shops').select('id,name,slug,currency').order('name');
+    if (error) { errorBox.textContent = error.message; return; }
+    shops = data || []; currentUserRole = 'platform_admin';
+  } else {
+    const { data: memberships, error: memberError } = await db.from('shop_members').select('shop_id,role').eq('user_id', currentUser.id);
+    if (memberError) { errorBox.textContent = memberError.message; return; }
+    if (!memberships?.length) { await db.auth.signOut(); errorBox.textContent = 'This account has not been assigned to a BAJAJ shop. Ask your shop administrator for access.'; return; }
+    const { data, error } = await db.from('shops').select('id,name,slug,currency').in('id', memberships.map(m => m.shop_id)).order('name');
+    if (error) { errorBox.textContent = error.message; return; }
+    shops = data || [];
+    const selected = memberships.find(m => shops.some(s => s.id === m.shop_id));
+    currentUserRole = selected?.role || 'pos_user';
+    currentShop = shops.find(s => s.id === selected?.shop_id) || null;
   }
-  const { data: shops, error } = await db.from('shops').select('id,name,slug,currency').order('name');
-  if (error) { document.querySelector('#auth-error').textContent = error.message; return; }
-  currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
-  if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
+  if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
+  if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
+  const permissions = {platform_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','sales']};
+  const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
-  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['dashboard','pos','inventory','customers','sales','suppliers','reports','shops','users','settings'].includes(b.dataset.page); });
-  document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
-  document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
+  document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
+  document.querySelector('#signed-in-name').textContent = currentUser.email || 'BAJAJ User';
+  document.querySelector('.sidefoot strong').textContent = isPlatformAdmin ? 'Main Admin · Connected' : (currentUserRole === 'sub_admin' ? 'Sub-admin · Connected' : 'POS User · Connected');
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
-  document.querySelector('#view').innerHTML =
-    heading('LIVE WORKSPACE', 'Welcome to BAJAJ', 'Your Main Admin account is connected to the live database.', '<button class="primary" onclick="page(&quot;pos&quot;)">Open Point of Sale →</button>') +
-    '<div class="stats"><div class="stat"><div class="stathead">Inventory products</div><strong id="live-product-count">—</strong><small class="muted">Live database count</small></div><div class="stat"><div class="stathead">Shop</div><strong>' + safeText(currentShop.name) + '</strong><small class="muted">Workspace connected</small></div></div>' +
-    '<div class="card"><div class="cardhead"><h3>Live inventory</h3><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div><div id="live-inventory"><p class="muted">Loading live inventory…</p></div></div>' +
-    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add a spare part</h3><span>Saved directly to Supabase</span></div><form id="new-product-form" class="formrow" style="align-items:end"><div class="field"><label>Product code</label><input name="product_code" required placeholder="e.g. BAJ-001"></div><div class="field"><label>Product name</label><input name="product_name" required placeholder="e.g. Brake Shoe Set"></div><div class="field"><label>Category</label><input name="category" placeholder="e.g. Brakes"></div><div class="field"><label>Opening quantity</label><input name="quantity" type="number" min="0" step="1" value="0" required></div><div class="field"><label>Low-stock alert at</label><input name="low_stock_threshold" type="number" min="0" step="1" value="5"></div><div class="field"><label>Cost price (LKR)</label><input name="cost_price" type="number" min="0" step="0.01" required></div><div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" required></div><button class="primary" type="submit">＋ Save product</button></form><div id="product-form-message" class="muted" style="font-size:12px;margin-top:8px"></div></div>' +
-    '<p class="muted" style="font-size:11px">Inventory records are read from and saved to the BAJAJ Supabase database.</p>';
-  await refreshLiveInventory();
-  document.querySelector('#new-product-form').addEventListener('submit', addLiveProduct);
+  await page('dashboard');
 }
 
 document.querySelector('#login-form').addEventListener('submit', async (event) => {
@@ -270,7 +277,7 @@ let customers=[{name:'Nimal Perera',phone:'077 123 4567',balance:3200},{name:'Ka
 const money=n=>'LKR '+Number(n).toLocaleString('en-LK');
 const $=s=>document.querySelector(s);
 function toast(t){let e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-function page(p){document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#crumb').textContent=({pos:'Point of Sale',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
+function page(p){const permissions={platform_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({pos:'Point of Sale',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard) }
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));
 $('#menu').onclick=()=>$('#sidebar').classList.toggle('open');
 $('#theme').onclick=()=>{let d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';$('#theme').textContent=d.dataset.theme==='dark'?'☀':'☾'};
@@ -771,11 +778,11 @@ async function loadShopMembers(){
 }
 async function loadShopAuditLog(){
   const host=$('#shop-audit-list');if(!host)return;
-  const {data,error}=await db.from('audit_logs').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
+  const {data,error}=await db.from('activity_events').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
   if(error){host.innerHTML='<div class="notice">Could not load audit history: '+safeText(error.message)+'</div>';return;}
   const rows=data||[];
   host.innerHTML=rows.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Action</th><th>Record</th><th>User</th><th>Details</th></tr></thead><tbody>'+
-  rows.map(x=>'<tr><td>'+safeText(x.created_at?new Date(x.created_at).toLocaleString():'—')+'</td><td>'+safeText(x.action||x.event_type||x.operation||'Activity')+'</td><td>'+safeText(x.entity_type||x.table_name||x.entity||'—')+'</td><td>'+safeText(x.user_id||x.actor_id||'—')+'</td><td>'+safeText(typeof x.details==='string'?x.details:JSON.stringify(x.details||x.metadata||{}))+'</td></tr>').join('')+
+  rows.map(x=>'<tr><td>'+safeText(x.created_at?new Date(x.created_at).toLocaleString():'—')+'</td><td>'+safeText(x.action||'Activity')+'</td><td>'+safeText(x.entity_type||'—')+'</td><td>'+safeText(x.actor_id||'—')+'</td><td>'+safeText(typeof x.details==='string'?x.details:JSON.stringify(x.details||{}))+'</td></tr>').join('')+
   '</tbody></table></div>':'<div class="empty">No audit events recorded for this shop yet.</div>';
 }
 async function assignShopMember(event){
