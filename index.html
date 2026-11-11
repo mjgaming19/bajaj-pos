@@ -200,7 +200,7 @@ async function verifyWorkspace() {
   currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
   document.body.classList.add('authenticated');
-  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','customers'].includes(b.dataset.page); });
+  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','customers','sales'].includes(b.dataset.page); });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
@@ -276,8 +276,9 @@ async function pos() {
   cart = [];
   $('#view').innerHTML = heading('CHECKOUT','Point of Sale','Live BAJAJ products · Sales are saved securely to Supabase.') +
     '<div class="poslayout"><div class="card"><div class="toolbar"><input class="search" id="possearch" placeholder="Search product name or code…" oninput="filterPOS()"></div><div id="pos-loading" class="muted">Loading live products…</div><div class="productgrid" id="productgrid"></div></div>' +
-    '<div class="card"><div class="cardhead"><h3>Current order</h3><span id="cartcount">0 items</span></div><div id="cartlines" style="margin:12px 0"><div class="empty">Your cart is empty</div></div><div class="totalrow"><span>Subtotal</span><b id="subtotal">'+money(0)+'</b></div><div class="totalrow"><span>Discount</span><b>'+money(0)+'</b></div><div class="totalrow final"><span>Total</span><span id="total">'+money(0)+'</span></div><div class="field" style="margin:12px 0"><label>Payment method</label><select id="payment"><option value="cash">Cash</option><option value="card">Card</option></select></div><button class="primary" id="checkout-button" style="width:100%" onclick="checkout()">Complete sale</button><p class="muted" style="font-size:10px;line-height:1.5">Checkout checks stock and records the sale in one secure database transaction. Credit sales will be enabled with customer accounts and approval workflow.</p><div id="checkout-message" class="muted" style="font-size:12px;margin-top:10px"></div></div></div>';
+    '<div class="card"><div class="cardhead"><h3>Current order</h3><span id="cartcount">0 items</span></div><div id="cartlines" style="margin:12px 0"><div class="empty">Your cart is empty</div></div><div class="totalrow"><span>Subtotal</span><b id="subtotal">'+money(0)+'</b></div><div class="totalrow"><span>Discount</span><b>'+money(0)+'</b></div><div class="totalrow final"><span>Total</span><span id="total">'+money(0)+'</span></div><div class="field" style="margin:12px 0"><label>Customer (required for credit)</label><select id="pos-customer"><option value="">Walk-in customer</option></select></div><div class="field" style="margin:12px 0"><label>Payment method</label><select id="payment" onchange="toggleCreditCustomer()"><option value="cash">Cash</option><option value="card">Card</option><option value="credit">Credit — approval required</option></select></div><button class="primary" id="checkout-button" style="width:100%" onclick="checkout()">Complete sale</button><p class="muted" style="font-size:10px;line-height:1.5">Credit sales require a registered customer and Sub Admin approval. Stock is deducted only after approval.</p><div id="checkout-message" class="muted" style="font-size:12px;margin-top:10px"></div></div></div>';
   await refreshPOSProducts();
+  await loadPOSCustomers();
 }
 
 async function refreshPOSProducts() {
@@ -336,36 +337,81 @@ function renderCart() {
   $('#total').textContent = money(total);
 }
 
+async function loadPOSCustomers(){
+  const select=$('#pos-customer'); if(!select) return;
+  const {data,error}=await db.from('customers').select('id,name,phone').eq('shop_id',currentShop.id).order('name');
+  if(error){select.innerHTML='<option value="">Could not load customers</option>';return;}
+  liveCustomers=data||[];
+  select.innerHTML='<option value="">Walk-in customer</option>'+liveCustomers.map(c=>'<option value="'+safeText(c.id)+'">'+safeText(c.name)+(c.phone?' · '+safeText(c.phone):'')+'</option>').join('');
+}
+function toggleCreditCustomer(){
+  const credit=$('#payment')?.value==='credit', select=$('#pos-customer');
+  if(select){select.required=credit;select.style.borderColor=credit&&!select.value?'var(--red)':'var(--line)';}
+}
 async function checkout() {
   if (!cart.length) { toast('Add products to the cart first.'); return; }
-  const button = $('#checkout-button');
-  const message = $('#checkout-message');
-  button.disabled = true; button.textContent = 'Processing…'; message.textContent = '';
-  const paymentMethod = $('#payment').value;
-  const items = cart.map(x => ({product_id:x.id,quantity:x.qty}));
-  const { data, error } = await db.rpc('create_sale', {
-    p_shop_id: currentShop.id,
-    p_customer_id: null,
-    p_payment_method: paymentMethod,
-    p_items: items,
-    p_discount: 0
-  });
-  button.disabled = false; button.textContent = 'Complete sale';
-  if (error) {
-    message.textContent = 'Sale was not completed: ' + error.message;
-    return;
-  }
-  const result = Array.isArray(data) ? data[0] : data;
-  const receipt = result?.receipt_number || result?.receipt_no || result?.sale_id || result?.id || 'Sale saved';
-  message.textContent = 'Sale completed successfully · ' + receipt;
-  toast('Sale saved to BAJAJ database.');
-  cart = [];
-  await refreshPOSProducts();
-  renderCart();
+  const button=$('#checkout-button'),message=$('#checkout-message');
+  const paymentMethod=$('#payment').value,customerId=$('#pos-customer').value||null;
+  if(paymentMethod==='credit'&&!customerId){message.textContent='Select a registered customer before creating a credit sale.';toggleCreditCustomer();return;}
+  button.disabled=true;button.textContent='Processing…';message.textContent='';
+  const items=cart.map(x=>({product_id:x.id,quantity:x.qty}));
+  const {data,error}=await db.rpc('create_sale',{p_shop_id:currentShop.id,p_customer_id:customerId,p_payment_method:paymentMethod,p_items:items,p_discount:0});
+  button.disabled=false;button.textContent='Complete sale';
+  if(error){message.textContent='Sale was not completed: '+error.message;return;}
+  const result=Array.isArray(data)?data[0]:data;
+  const receipt=result?.receipt_number||result?.receipt_no||result?.sale_id||result?.id||'Sale saved';
+  const pending=paymentMethod==='credit';
+  message.textContent=pending?'Credit sale submitted for approval · '+receipt:'Sale completed successfully · '+receipt;
+  toast(pending?'Credit sale awaiting approval.':'Sale saved to BAJAJ database.');
+  cart=[];await refreshPOSProducts();renderCart();await loadPOSCustomers();
 }
 
-function salesPage(){ $('#view').innerHTML=heading('TRANSACTIONS','Sales history','Review completed sales and payment status.')+`<div class="toolbar"><input class="search" placeholder="Search receipt or customer…" oninput="filterSales(this.value)"></div><div class="card tablecard" id="salestable">${salesTable(sales)}</div>`}
-function filterSales(q){$('#salestable').innerHTML=salesTable(sales.filter(s=>(s.id+s.customer+s.status).toLowerCase().includes(q.toLowerCase())))}
+async function salesPage(){
+  $('#view').innerHTML=heading('TRANSACTIONS','Sales & credit management','Live sales history, credit approvals and customer repayments.')+
+  '<div class="toolbar"><button class="secondary" onclick="loadLiveSales()">↻ Refresh</button><input class="search" id="sales-search" placeholder="Search receipt, customer or status…" oninput="filterLiveSales()"></div>'+
+  '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Pending credit approvals</h3><span id="pending-count">Loading…</span></div><div id="pending-credit-list" class="muted">Loading pending credit sales…</div></div>'+
+  '<div class="card"><div class="cardhead"><h3>All transactions</h3><span id="sales-count">Loading…</span></div><div id="live-sales-table" class="tablecard">Loading sales…</div></div>'+
+  '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Record a credit repayment</h3></div><div class="formrow"><div class="field"><label>Credit sale</label><select id="repayment-sale"><option value="">Select an outstanding credit sale</option></select></div><div class="field"><label>Amount (LKR)</label><input id="repayment-amount" type="number" min="0.01" step="0.01" placeholder="Amount received"></div><div class="field"><label>Payment method</label><select id="repayment-method"><option value="cash">Cash</option><option value="card">Card</option></select></div><button class="primary" onclick="submitRepayment()">Record repayment</button></div><div id="repayment-message" class="muted"></div></div>';
+  await loadLiveSales();
+}
+let liveSales=[];
+function saleLabel(s){return s.receipt_number||s.receipt_no||String(s.id).slice(0,8)}
+function customerLabel(id){const c=(liveCustomers||[]).find(x=>String(x.id)===String(id));return c?.name||'Customer';}
+async function loadLiveSales(){
+  const target=$('#live-sales-table');if(!target)return;
+  target.textContent='Loading sales…';
+  const {data,error}=await db.from('sales').select('*').eq('shop_id',currentShop.id).order('sold_at',{ascending:false});
+  if(error){target.innerHTML='<div class="notice">Could not load sales: '+safeText(error.message)+'</div>';return;}
+  liveSales=data||[];
+  const pending=liveSales.filter(s=>s.status==='pending_approval');
+  $('#pending-count').textContent=pending.length+' awaiting approval';
+  $('#pending-credit-list').innerHTML=pending.length?pending.map(s=>'<div class="cartline"><div><b>'+safeText(saleLabel(s))+'</b><div class="muted">'+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</div></div><button class="primary" onclick="approveCreditSale(\''+safeText(s.id)+'\')">Approve</button></div>').join(''):'<div class="empty">No credit sales awaiting approval.</div>';
+  const outstanding=liveSales.filter(s=>s.payment_method==='credit'&&s.status==='completed'&&s.payment_status!=='paid');
+  const select=$('#repayment-sale');
+  if(select)select.innerHTML='<option value="">Select an outstanding credit sale</option>'+outstanding.map(s=>'<option value="'+safeText(s.id)+'">'+safeText(saleLabel(s))+' · '+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+' · '+safeText(s.payment_status||'unpaid')+'</option>').join('');
+  filterLiveSales();
+}
+function filterLiveSales(){
+  const target=$('#live-sales-table');if(!target)return;
+  const q=($('#sales-search')?.value||'').toLowerCase();
+  const rows=liveSales.filter(s=>(String(saleLabel(s))+' '+customerLabel(s.customer_id)+' '+String(s.status)+' '+String(s.payment_status||'')).toLowerCase().includes(q));
+  $('#sales-count').textContent=rows.length+' transactions';
+  target.innerHTML=rows.length?'<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Total</th><th>Sale status</th><th>Payment</th></tr></thead><tbody>'+rows.map(s=>'<tr><td><b>'+safeText(saleLabel(s))+'</b></td><td>'+safeText(customerLabel(s.customer_id))+'</td><td>'+safeText(s.sold_at?new Date(s.sold_at).toLocaleString():'—')+'</td><td><b>'+money(Number(s.total||0))+'</b></td><td><span class="badge '+(s.status==='pending_approval'?'warn':'')+'">'+safeText(s.status||'—')+'</span></td><td>'+safeText(s.payment_status||s.payment_method||'—')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No matching transactions.</div>';
+}
+async function approveCreditSale(id){
+  if(!confirm('Approve this credit sale? Stock will be deducted now.'))return;
+  const {data,error}=await db.rpc('approve_credit_sale',{p_sale_id:id});
+  if(error){toast('Approval failed: '+error.message);return;}
+  toast('Credit sale approved and stock deducted.');await loadLiveSales();await refreshPOSProducts();
+}
+async function submitRepayment(){
+  const id=$('#repayment-sale')?.value,amount=Number($('#repayment-amount')?.value),method=$('#repayment-method')?.value;
+  const message=$('#repayment-message');
+  if(!id||!Number.isFinite(amount)||amount<=0){message.textContent='Select a credit sale and enter a valid repayment amount.';return;}
+  const {data,error}=await db.rpc('record_repayment',{p_sale_id:id,p_amount:amount,p_method:method});
+  if(error){message.textContent='Repayment was not saved: '+error.message;return;}
+  message.textContent='Repayment recorded successfully.';$('#repayment-amount').value='';toast('Repayment saved.');await loadLiveSales();
+}
 async function customersPage(){
   $('#view').innerHTML = heading('CUSTOMER ACCOUNTS','Customers','Register customers and keep their contact details in one place.') +
     '<div class="toolbar"><input class="search" id="customer-search" placeholder="Search customer name or phone…" oninput="filterLiveCustomers()"><button class="secondary" onclick="refreshLiveCustomers()">↻ Refresh</button></div>' +
