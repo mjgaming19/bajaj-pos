@@ -754,9 +754,11 @@ async function usersPage(){
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add an existing user to '+safeText(currentShop.name)+'</h3><span>Existing account required</span></div>'+
   '<form id="shop-member-form" class="formrow" style="align-items:end"><div class="field"><label>Supabase Auth user UUID</label><input name="user_id" required placeholder="Paste the user UUID"></div><div class="field"><label>Shop role</label><select name="role"><option value="sub_admin">Sub-admin — Shop manager</option><option value="pos_user">POS user — Cashier</option></select></div><button class="primary" type="submit">＋ Assign user</button></form>'+
   '<div id="member-form-message" class="muted" style="margin-top:8px">First create the person’s login in Supabase Authentication → Users. Then paste their user UUID here. Never share passwords or secret keys.</div></div>'+
-  '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Users assigned to this shop</h3><button class="secondary" onclick="loadShopMembers()">↻ Refresh</button></div><div id="shop-member-list">Loading shop users…</div></div>';
+  '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Users assigned to this shop</h3><button class="secondary" onclick="loadShopMembers()">↻ Refresh</button></div><div id="shop-member-list">Loading shop users…</div></div>'+
+  '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Audit history</h3><button class="secondary" onclick="loadShopAuditLog()">↻ Refresh</button></div><div id="shop-audit-list">Loading audit history…</div></div>';
   $('#shop-member-form').addEventListener('submit',assignShopMember);
   await loadShopMembers();
+  await loadShopAuditLog();
 }
 async function loadShopMembers(){
   const host=$('#shop-member-list');if(!host)return;
@@ -766,6 +768,15 @@ async function loadShopMembers(){
   host.innerHTML=rows.length?'<div class="tablecard"><table><thead><tr><th>User UUID</th><th>Role</th><th>Actions</th></tr></thead><tbody>'+
   rows.map(x=>'<tr><td><code>'+safeText(x.user_id)+'</code></td><td><span class="badge">'+safeText(x.role)+'</span></td><td><button class="secondary" onclick="changeShopMemberRole(\''+safeText(x.id)+'\',\''+safeText(x.role)+'\')">Change role</button> <button class="danger" onclick="removeShopMember(\''+safeText(x.id)+'\')">Remove</button></td></tr>').join('')+
   '</tbody></table></div>':'<div class="empty">No additional users assigned to this shop yet.</div>';
+}
+async function loadShopAuditLog(){
+  const host=$('#shop-audit-list');if(!host)return;
+  const {data,error}=await db.from('audit_logs').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
+  if(error){host.innerHTML='<div class="notice">Could not load audit history: '+safeText(error.message)+'</div>';return;}
+  const rows=data||[];
+  host.innerHTML=rows.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Action</th><th>Record</th><th>User</th><th>Details</th></tr></thead><tbody>'+
+  rows.map(x=>'<tr><td>'+safeText(x.created_at?new Date(x.created_at).toLocaleString():'—')+'</td><td>'+safeText(x.action||x.event_type||x.operation||'Activity')+'</td><td>'+safeText(x.entity_type||x.table_name||x.entity||'—')+'</td><td>'+safeText(x.user_id||x.actor_id||'—')+'</td><td>'+safeText(typeof x.details==='string'?x.details:JSON.stringify(x.details||x.metadata||{}))+'</td></tr>').join('')+
+  '</tbody></table></div>':'<div class="empty">No audit events recorded for this shop yet.</div>';
 }
 async function assignShopMember(event){
   event.preventDefault();const form=event.currentTarget,msg=$('#member-form-message');
