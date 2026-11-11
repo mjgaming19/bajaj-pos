@@ -279,7 +279,7 @@ async function dashboard(){
   $('#view').innerHTML=heading('OVERVIEW','Good day, Main Admin 👋','Live figures from your selected BAJAJ shop.','<button class="primary" onclick="page(&quot;pos&quot;)">＋ New sale</button>')+
   '<div id="dashboard-live"><p class="muted">Loading live business figures…</p></div>';
   const [salesResult,productsResult,customersResult]=await Promise.all([
-    db.from('sales').select('id,total,status,sold_at,payment_method,payment_status,receipt_number,receipt_no,customer_id').eq('shop_id',currentShop.id).order('sold_at',{ascending:false}).limit(8),
+    db.from('sales').select('id,total,status,sold_at,payment_method,payment_status,receipt_number,receipt_no,customer_id').eq('shop_id',currentShop.id).order('sold_at',{ascending:false}),
     loadLiveInventory(),
     db.from('customers').select('id',{count:'exact',head:true}).eq('shop_id',currentShop.id)
   ]);
