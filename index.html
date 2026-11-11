@@ -221,7 +221,7 @@ async function verifyWorkspace() {
   currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
   document.body.classList.add('authenticated');
-  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','inventory','customers','sales','suppliers','reports'].includes(b.dataset.page); });
+  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['dashboard','pos','inventory','customers','sales','suppliers','reports'].includes(b.dataset.page); });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
