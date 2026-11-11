@@ -759,7 +759,7 @@ async function usersPage(){
   '<div class="grid2"><div class="card"><div class="cardhead"><h3>Main Admin</h3><span class="badge blue">Platform owner</span></div><h2>'+safeText(currentUser.email||'Your account')+'</h2><p class="muted">Full platform access across all shops. Your Main Admin account is managed separately from shop memberships.</p></div>'+
   '<div class="card"><div class="cardhead"><h3>Shop roles</h3></div><div class="cartline"><b>Sub-admin</b><span class="badge">Shop manager</span></div><p class="muted">Manages this shop’s inventory, suppliers, customers, reports, credit approvals and POS users.</p><div class="cartline"><b>POS user</b><span class="badge warn">Cashier</span></div><p class="muted">Handles checkout, customer lookup and receipts. No shop administration.</p></div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add an existing user to '+safeText(currentShop.name)+'</h3><span>Existing account required</span></div>'+
-  '<form id="shop-member-form" class="formrow" style="align-items:end"><div class="field"><label>Supabase Auth user UUID</label><input name="user_id" required placeholder="Paste the user UUID"></div><div class="field"><label>Shop role</label><select name="role"><option value="sub_admin">Sub-admin — Shop manager</option><option value="pos_user">POS user — Cashier</option></select></div><button class="primary" type="submit">＋ Assign user</button></form>'+
+  '<form id="shop-member-form" class="formrow" style="align-items:end"><div class="field"><label>Supabase Auth user UUID</label><input name="user_id" required placeholder="Paste the user UUID"></div><div class="field"><label>Shop role</label><select name="role">'+(isPlatformAdmin?'<option value="sub_admin">Sub-admin — Shop manager</option>':'')+'<option value="pos_user">POS user — Cashier</option></select></div><button class="primary" type="submit">＋ Assign user</button></form>'+
   '<div id="member-form-message" class="muted" style="margin-top:8px">First create the person’s login in Supabase Authentication → Users. Then paste their user UUID here. Never share passwords or secret keys.</div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Invite a new user</h3><span>Secure email invitation</span></div>'+
   '<form id="shop-invite-form" class="formrow" style="align-items:end"><div class="field"><label>Email address</label><input name="email" type="email" required placeholder="person@example.com"></div><div class="field"><label>Shop role</label><select name="role">'+(isPlatformAdmin?'<option value="sub_admin">Sub-admin — Shop manager</option>':'')+'<option value="pos_user">POS user — Cashier</option></select></div><button class="primary" type="submit">Send invitation</button></form>'+
@@ -813,8 +813,8 @@ async function assignShopMember(event){
   form.reset();msg.textContent='User assigned to '+currentShop.name+'.';await loadShopMembers();toast('Shop user assigned.');
 }
 async function changeShopMemberRole(id,currentRole){
-  const next=prompt('Enter new role: sub_admin or pos_user',currentRole);if(next===null)return;
-  if(!['sub_admin','pos_user'].includes(next.trim())){alert('Role must be sub_admin or pos_user.');return;}
+  const choices=isPlatformAdmin?'sub_admin or pos_user':'pos_user';const next=prompt('Enter new role: '+choices,currentRole);if(next===null)return;
+  if(!['sub_admin','pos_user'].includes(next.trim())||(!isPlatformAdmin&&next.trim()!=='pos_user')){alert('This account can only assign POS users.');return;}
   const {error}=await db.from('shop_members').update({role:next.trim()}).eq('id',id).eq('shop_id',currentShop.id);
   if(error){alert('Could not update role: '+error.message);return;}await loadShopMembers();toast('Shop role updated.');
 }
