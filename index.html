@@ -25,9 +25,32 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 .mobilemenu{display:none}
 @media(max-width:1000px){.sidebar{width:210px}.stats{grid-template-columns:repeat(2,1fr)}.grid2,.poslayout{grid-template-columns:1fr}}
 @media(max-width:680px){.app{display:block}.sidebar{position:fixed;z-index:10;left:-260px;top:0;bottom:0;width:245px;transition:.25s;box-shadow:var(--shadow)}.sidebar.open{left:0}.topbar{padding:0 15px;height:62px}.mobilemenu{display:inline-block}.content{padding:20px 14px}.heading{align-items:center}.heading h1{font-size:22px}.stats{gap:9px}.stat{padding:13px}.stat strong{font-size:21px}.productgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.formrow{grid-template-columns:1fr}.userpill span:last-child{display:none}}
+
+.auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:var(--bg)}
+.auth-card{width:min(420px,100%);background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:var(--shadow)}
+.auth-card h1{margin:8px 0;font-size:24px}.auth-card p{color:var(--muted);line-height:1.5}
+.auth-card label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px}
+.auth-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}
+.auth-error{color:var(--red);font-size:12px;min-height:18px;margin-top:10px}
+body:not(.authenticated) .app,body:not(.authenticated) .toast{display:none}
+body.authenticated #auth-screen{display:none}
 </style>
 </head>
 <body>
+<div id="auth-screen" class="auth-screen">
+  <form class="auth-card" id="login-form">
+    <div class="eyebrow">BAJAJ · SECURE ACCESS</div>
+    <h1>Welcome back</h1>
+    <p>Sign in with your BAJAJ platform account to access your workspace.</p>
+    <label for="login-email">Email address</label>
+    <input id="login-email" type="email" autocomplete="username" required placeholder="you@example.com">
+    <label for="login-password">Password</label>
+    <input id="login-password" type="password" autocomplete="current-password" required placeholder="Your password">
+    <div class="auth-error" id="auth-error"></div>
+    <button class="primary" id="login-button" type="submit" style="width:100%;margin-top:8px">Sign in</button>
+    <p style="font-size:11px;margin-bottom:0">Access is managed by your platform administrator.</p>
+  </form>
+</div>
 <div class="app">
 <aside class="sidebar" id="sidebar">
   <div class="brand"><img src="assets/bajaj-logo.png" alt="BAJAJ logo"><small>SPARE PARTS MANAGEMENT</small></div>
@@ -49,13 +72,70 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 <main class="main">
 <header class="topbar">
   <div style="display:flex;align-items:center;gap:12px"><button class="iconbtn mobilemenu" id="menu">☰</button><div class="crumb">BAJAJ / <b id="crumb">Dashboard</b></div></div>
-  <div class="topactions"><button class="iconbtn" id="theme" title="Switch theme">☾</button><button class="userpill"><span class="avatar">A</span><span><b style="font-size:12px">Main Admin</b><br><small class="muted">Platform Owner</small></span></button></div>
+  <div class="topactions"><button class="iconbtn" id="theme" title="Switch theme">☾</button><button class="userpill" id="logout"><span class="avatar">A</span><span><b id="signed-in-name" style="font-size:12px">Main Admin</b><br><small class="muted">Platform Owner · Sign out</small></span></button></div>
 </header>
 <section class="content" id="view"></section>
 </main>
 </div>
 <div class="toast" id="toast"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+const SUPABASE_URL = "https://bcgpkuenbdbhowpnikoj.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_PJKiTDpngevBjZyXI9fZCg_dLIBYCKh";
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+let currentUser = null;
+let currentShop = null;
+
+async function initializeApp() {
+  const { data, error } = await db.auth.getSession();
+  if (error) console.error(error);
+  if (!data.session) return;
+  currentUser = data.session.user;
+  await verifyWorkspace();
+}
+
+async function verifyWorkspace() {
+  const { data: admin, error: adminError } = await db.from('platform_admins')
+    .select('user_id').eq('user_id', currentUser.id).maybeSingle();
+  if (adminError) { document.querySelector('#auth-error').textContent = adminError.message; return; }
+  if (!admin) {
+    await db.auth.signOut();
+    document.querySelector('#auth-error').textContent = 'This account is not registered as a platform administrator.';
+    return;
+  }
+  const { data: shops, error } = await db.from('shops').select('id,name,slug,currency').order('name');
+  if (error) { document.querySelector('#auth-error').textContent = error.message; return; }
+  currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
+  if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
+  document.body.classList.add('authenticated');
+  document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
+  document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
+  document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
+  document.querySelector('#view').innerHTML = heading('DATABASE CONNECTED', 'Welcome to BAJAJ', 'Your Main Admin account has signed in successfully.') +
+    '<div class="card"><h3>Secure connection established</h3><p class="muted">Your account is authenticated and the BAJAJ shop is available. We are now ready to connect inventory, checkout, customers and reporting to live records.</p><div class="notice">Connection stage only: the existing demo screens still contain sample data. Do not use them for real sales until the live modules are connected.</div><p><b>Shop:</b> ' + currentShop.name + '</p><p><b>Currency:</b> ' + currentShop.currency + '</p><p><b>Signed in as:</b> ' + (currentUser.email || currentUser.id) + '</p></div>';
+}
+
+document.querySelector('#login-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const button = document.querySelector('#login-button');
+  const errorBox = document.querySelector('#auth-error');
+  button.disabled = true; button.textContent = 'Signing in…'; errorBox.textContent = '';
+  const { data, error } = await db.auth.signInWithPassword({
+    email: document.querySelector('#login-email').value.trim(),
+    password: document.querySelector('#login-password').value
+  });
+  button.disabled = false; button.textContent = 'Sign in';
+  if (error) { errorBox.textContent = error.message; return; }
+  currentUser = data.user;
+  await verifyWorkspace();
+});
+
+document.querySelector('#logout').addEventListener('click', async () => {
+  await db.auth.signOut(); currentUser = null; currentShop = null;
+  document.body.classList.remove('authenticated');
+  document.querySelector('#login-password').value = '';
+});
+
 const products=[
 {id:1,code:'BAJ-001',part:'Brake Shoe Set',oem:'BJA-BRK-01',category:'Brakes',price:1850,cost:1250,qty:24,icon:'⚙'},
 {id:2,code:'BAJ-002',part:'Spark Plug',oem:'BJA-SPK-02',category:'Electrical',price:1200,cost:760,qty:42,icon:'✦'},
@@ -106,6 +186,6 @@ function suppliersPage(){ $('#view').innerHTML=heading('PURCHASING','Suppliers',
 function reportsPage(){ $('#view').innerHTML=heading('BUSINESS INSIGHTS','Reports','Sales, gross profit, stock value and outstanding credit.')+`<div class="stats"><div class="stat"><div class="stathead">Gross sales</div><strong>${money(284500)}</strong><small class="muted">Demo period</small></div><div class="stat"><div class="stathead">Estimated gross profit</div><strong>${money(68400)}</strong><small class="muted">Based on sample costs</small></div><div class="stat"><div class="stathead">Stock value (cost)</div><strong>${money(1250000)}</strong><small class="muted">Sample figure</small></div><div class="stat"><div class="stathead">Credit outstanding</div><strong>${money(customers.reduce((a,c)=>a+c.balance,0))}</strong><small class="muted">Sample figure</small></div></div><div class="notice">These are illustrative demo figures. Live reports will calculate from actual shop transactions.</div><div class="card"><h3>Report sections</h3><p class="muted">Daily sales · Monthly sales · Product performance · Gross profit · Stock movement · Customer balances · Payment methods</p></div>`}
 function usersPage(){ $('#view').innerHTML=heading('ACCESS CONTROL','User management','Three permission levels, with you as the platform owner.')+`<div class="grid2"><div class="card"><div class="cardhead"><h3>Platform owner</h3><span class="badge blue">You</span></div><h2>Main Admin</h2><p class="muted">Cross-shop platform access, shop management and system oversight.</p></div><div class="card"><div class="cardhead"><h3>Shop access roles</h3></div><div class="cartline"><b>Sub-admin</b><span class="badge">Shop manager</span></div><div class="cartline"><b>POS user</b><span class="badge warn">Cashier</span></div><p class="muted">Role permissions will be enforced by the secure backend in the production version.</p></div></div><div class="notice" style="margin-top:16px">Demo login is visual only. Real authentication, invitations and audit logs are not connected yet.</div>`}
 function settingsPage(){ $('#view').innerHTML=heading('PREFERENCES','Settings','Configure the BAJAJ workspace.')+`<div class="card"><h3>Business profile</h3><div class="formrow"><div class="field"><label>Business display name</label><input value="BAJAJ"></div><div class="field"><label>Currency</label><input value="LKR — Sri Lankan Rupee" disabled></div><div class="field"><label>Receipt prefix</label><input value="BAJ"></div><div class="field"><label>Theme</label><input value="Dark / Light" disabled></div></div><button class="primary" onclick="toast('Settings are demo-only for now.')">Save changes</button></div><div class="card" style="margin-top:15px"><h3>Hardware compatibility</h3><p class="muted">USB barcode scanner · ESC/POS thermal receipt printer · PDF receipt export · WhatsApp sharing (production integration)</p></div>`}
-dashboard();
+initializeApp();
 </script>
 </body></html>
