@@ -430,7 +430,7 @@ async function loadLiveSales(){
   liveSales=data||[];
   const pending=liveSales.filter(s=>s.status==='pending_approval');
   $('#pending-count').textContent=pending.length+' awaiting approval';
-  $('#pending-credit-list').innerHTML=pending.length?pending.map(s=>'<div class="cartline"><div><b>'+safeText(saleLabel(s))+'</b><div class="muted">'+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</div></div><div><button class="primary" onclick="approveCreditSale(\\''+safeText(s.id)+'\\')">Approve</button> <button class="danger" onclick="rejectCreditSale(\\''+safeText(s.id)+'\\')">Reject</button></div></div>').join(''):'<div class="empty">No credit sales awaiting approval.</div>';
+  $('#pending-credit-list').innerHTML=pending.length?pending.map(s=>'<div class="cartline"><div><b>'+safeText(saleLabel(s))+'</b><div class="muted">'+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</div></div><div><button class="primary" onclick="approveCreditSale(\''+safeText(s.id)+'\')">Approve</button> <button class="danger" onclick="rejectCreditSale(\''+safeText(s.id)+'\')">Reject</button></div></div>').join(''):'<div class="empty">No credit sales awaiting approval.</div>';
   const outstanding=liveSales.filter(s=>s.payment_method==='credit'&&s.status==='completed'&&s.payment_status!=='paid');
   const select=$('#repayment-sale');
   if(select)select.innerHTML='<option value="">Select an outstanding credit sale</option>'+outstanding.map(s=>'<option value="'+safeText(s.id)+'">'+safeText(saleLabel(s))+' · '+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+' · '+safeText(s.payment_status||'unpaid')+'</option>').join('');
@@ -442,7 +442,7 @@ function filterLiveSales(){
   const rows=liveSales.filter(s=>(String(saleLabel(s))+' '+customerLabel(s.customer_id)+' '+String(s.status)+' '+String(s.payment_status||'')).toLowerCase().includes(q));
   $('#sales-count').textContent=rows.length+' transactions';
   target.innerHTML=rows.length?'<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Total</th><th>Sale status</th><th>Payment</th><th>Actions</th></tr></thead><tbody>'+rows.map(s=>{
-    const action=s.status==='completed'?'<button class="danger" onclick="voidSale(\\''+safeText(s.id)+'\\')">Cancel / refund</button>':s.status==='pending_approval'?'<button class="danger" onclick="rejectCreditSale(\\''+safeText(s.id)+'\\')">Reject</button>':'—';
+    const action=s.status==='completed'?'<button class="danger" onclick="voidSale(\''+safeText(s.id)+'\')">Cancel / refund</button>':s.status==='pending_approval'?'<button class="danger" onclick="rejectCreditSale(\''+safeText(s.id)+'\')">Reject</button>':'—';
     return '<tr><td><b>'+safeText(saleLabel(s))+'</b></td><td>'+safeText(customerLabel(s.customer_id))+'</td><td>'+safeText(s.sold_at?new Date(s.sold_at).toLocaleString():'—')+'</td><td><b>'+money(Number(s.total||0))+'</b></td><td><span class="badge '+(s.status==='pending_approval'?'warn':'')+'">'+safeText(s.status||'—')+'</span></td><td>'+safeText(s.payment_status||s.payment_method||'—')+'</td><td>'+action+'</td></tr>';
   }).join('')+'</tbody></table>':'<div class="empty">No matching transactions.</div>';
 }
