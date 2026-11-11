@@ -21,6 +21,7 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:15px}.search{flex:1;min-width:190px;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 12px;color:var(--text)}.tablecard{overflow:auto}.empty{text-align:center;padding:35px;color:var(--muted)}
 .poslayout{display:grid;grid-template-columns:1.5fr .9fr;gap:17px}.productgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.product{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:13px;text-align:left;color:var(--text)}.product:hover{border-color:var(--blue);transform:translateY(-1px)}.product .particon{width:35px;height:35px;border-radius:10px;background:rgba(7,85,165,.1);display:grid;place-items:center;margin-bottom:10px;font-size:18px}.product b{display:block;font-size:12px}.product small{display:block;color:var(--muted);margin:4px 0}.product strong{color:var(--blue)}.cartline{display:flex;justify-content:space-between;gap:10px;padding:12px 0;border-bottom:1px solid var(--line);font-size:12px}.qty{display:flex;align-items:center;gap:7px}.qty button{width:22px;height:22px;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:6px}.totalrow{display:flex;justify-content:space-between;padding:9px 0;color:var(--muted)}.totalrow.final{font-size:18px;color:var(--text);font-weight:800;border-top:1px solid var(--line);margin-top:5px;padding-top:15px}
 .formrow{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:12px 0}.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px}.field input,.field select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text)}.notice{padding:12px 14px;background:rgba(7,85,165,.08);border-radius:10px;color:var(--muted);font-size:12px;margin-bottom:16px}
+.receipt-paper{max-width:420px;margin:18px auto;background:#fff;color:#111;padding:24px;border:1px solid #ddd;font:12px Arial,sans-serif}.receipt-paper h2,.receipt-paper p{text-align:center;margin:5px 0}.receipt-paper table{margin:14px 0}.receipt-paper th,.receipt-paper td{color:#111;border-bottom:1px dashed #bbb;padding:7px 3px;font-size:11px}.receipt-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:12px 0}.receipt-logo{display:block;max-width:130px;max-height:55px;object-fit:contain;margin:0 auto 10px}.pos-tools{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:12px}.pos-tools .search{min-width:0}@media print{body *{visibility:hidden!important}#receipt-preview,#receipt-preview *{visibility:visible!important}#receipt-preview{position:absolute;left:0;top:0;width:100%;margin:0;padding:0;border:0;box-shadow:none}.receipt-actions{display:none!important}.receipt-paper{border:0;margin:0 auto;max-width:80mm;padding:4mm}}
 .toast{position:fixed;bottom:22px;right:22px;background:#14253b;color:white;padding:12px 17px;border-radius:10px;box-shadow:var(--shadow);opacity:0;transform:translateY(10px);transition:.25s;pointer-events:none;z-index:20}.toast.show{opacity:1;transform:translateY(0)}
 .mobilemenu{display:none}
 @media(max-width:1000px){.sidebar{width:210px}.stats{grid-template-columns:repeat(2,1fr)}.grid2,.poslayout{grid-template-columns:1fr}}
@@ -347,13 +348,18 @@ function filterInventory(){let q=$('#invsearch').value.toLowerCase();$('#invtabl
 function addProduct(){let name=prompt('Product name');if(!name)return;let code='BAJ-'+String(products.length+1).padStart(3,'0');products.push({id:Date.now(),code,part:name,oem:'—',category:'General',price:0,cost:0,qty:0,icon:'⚙'});inventory()}
 let livePosProducts = [];
 
+let lastReceipt = null;
+let receiptSettings = null;
+
 async function pos() {
   cart = [];
-  $('#view').innerHTML = heading('CHECKOUT','Point of Sale','Live BAJAJ products · Sales are saved securely to Supabase.') +
-    '<div class="poslayout"><div class="card"><div class="toolbar"><input class="search" id="possearch" placeholder="Search product name or code…" oninput="filterPOS()"></div><div id="pos-loading" class="muted">Loading live products…</div><div class="productgrid" id="productgrid"></div></div>' +
-    '<div class="card"><div class="cardhead"><h3>Current order</h3><span id="cartcount">0 items</span></div><div id="cartlines" style="margin:12px 0"><div class="empty">Your cart is empty</div></div><div class="totalrow"><span>Subtotal</span><b id="subtotal">'+money(0)+'</b></div><div class="totalrow"><span>Discount</span><b>'+money(0)+'</b></div><div class="totalrow final"><span>Total</span><span id="total">'+money(0)+'</span></div><div class="field" style="margin:12px 0"><label>Customer (required for credit)</label><select id="pos-customer"><option value="">Walk-in customer</option></select></div><div class="field" style="margin:12px 0"><label>Payment method</label><select id="payment" onchange="toggleCreditCustomer()"><option value="cash">Cash</option><option value="card">Card</option><option value="credit">Credit — approval required</option></select></div><button class="primary" id="checkout-button" style="width:100%" onclick="checkout()">Complete sale</button><p class="muted" style="font-size:10px;line-height:1.5">Credit sales require a registered customer and Sub Admin approval. Stock is deducted only after approval.</p><div id="checkout-message" class="muted" style="font-size:12px;margin-top:10px"></div></div></div>';
+  lastReceipt = null;
+  $('#view').innerHTML = heading('CHECKOUT','Point of Sale','Scan a barcode, search for a part, apply a discount and print a receipt.') +
+    '<div class="poslayout"><div class="card"><div class="pos-tools"><input class="search" id="barcode-input" placeholder="Scan barcode or enter product code…" autocomplete="off" onkeydown="if(event.key===\'Enter\'){event.preventDefault();scanPOSCode()}"><button class="secondary" onclick="scanPOSCode()">Add code</button></div><div class="toolbar"><input class="search" id="possearch" placeholder="Search product name, code or category…" oninput="filterPOS()"></div><div id="pos-loading" class="muted">Loading live products…</div><div class="productgrid" id="productgrid"></div></div>' +
+    '<div class="card"><div class="cardhead"><h3>Current order</h3><span id="cartcount">0 items</span></div><div id="cartlines" style="margin:12px 0"><div class="empty">Your cart is empty</div></div><div class="totalrow"><span>Subtotal</span><b id="subtotal">'+money(0)+'</b></div><div class="field"><label>Discount (LKR)</label><input id="pos-discount" type="number" min="0" step="0.01" value="0" oninput="renderCart()"></div><div class="totalrow"><span>Discount</span><b id="discount-value">'+money(0)+'</b></div><div class="totalrow final"><span>Total</span><span id="total">'+money(0)+'</span></div><div class="field" style="margin:12px 0"><label>Customer (required for credit)</label><select id="pos-customer"><option value="">Walk-in customer</option></select></div><div class="field" style="margin:12px 0"><label>Payment method</label><select id="payment" onchange="toggleCreditCustomer();toggleCashTender()"><option value="cash">Cash</option><option value="card">Card</option><option value="credit">Credit — approval required</option></select></div><div class="field" id="cash-tender-wrap" style="margin:12px 0"><label>Cash received (LKR)</label><input id="cash-tendered" type="number" min="0" step="0.01" placeholder="Amount received" oninput="updateCashChange()"><small id="cash-change" class="muted"></small></div><button class="primary" id="checkout-button" style="width:100%" onclick="checkout()">Complete sale</button><p class="muted" style="font-size:10px;line-height:1.5">Credit sales require a registered customer and Sub Admin approval. Stock is deducted only after approval.</p><div id="checkout-message" class="muted" style="font-size:12px;margin-top:10px"></div></div></div><div id="receipt-preview"></div>';
   await refreshPOSProducts();
   await loadPOSCustomers();
+  toggleCashTender();
 }
 
 async function refreshPOSProducts() {
@@ -377,6 +383,31 @@ function renderPOSProducts(rows) {
 function filterPOS() {
   const q = ($('#possearch')?.value || '').toLowerCase();
   renderPOSProducts(livePosProducts.filter(p => (String(p.product_name)+' '+String(p.product_code)+' '+String(p.category||'')).toLowerCase().includes(q)));
+}
+
+function scanPOSCode() {
+  const input=$('#barcode-input');if(!input)return;
+  const code=String(input.value||'').trim().toLowerCase();
+  if(!code)return;
+  const product=livePosProducts.find(p=>String(p.product_code||'').trim().toLowerCase()===code);
+  if(!product){toast('No product found for code: '+code);input.select();return;}
+  addCart(product.id);input.value='';input.focus();
+}
+function getCartSubtotal(){
+  return cart.reduce((sum,x)=>{const p=livePosProducts.find(p=>String(p.id)===String(x.id));return sum+(p?Number(p.selling_price||0)*x.qty:0);},0);
+}
+function getDiscount(){
+  const input=$('#pos-discount');const raw=Number(input?.value||0);
+  return Number.isFinite(raw)?Math.max(0,Math.min(raw,getCartSubtotal())):0;
+}
+function toggleCashTender(){
+  const wrap=$('#cash-tender-wrap');if(wrap)wrap.style.display=$('#payment')?.value==='cash'?'block':'none';
+  updateCashChange();
+}
+function updateCashChange(){
+  const el=$('#cash-change');if(!el)return;
+  const tendered=Number($('#cash-tendered')?.value||0),total=Math.max(0,getCartSubtotal()-getDiscount());
+  el.textContent=tendered>=total&&total>0?'Change due: '+money(tendered-total):'';
 }
 
 function addCart(id) {
@@ -404,12 +435,15 @@ function renderCart() {
   if (!el) return;
   el.innerHTML = cart.length ? cart.map(x => {
     const p = livePosProducts.find(p => String(p.id) === String(x.id));
+    if(!p)return '';
     return '<div class="cartline"><div><b>'+safeText(p.product_name)+'</b><div class="muted">'+money(Number(p.selling_price))+' each</div></div><div class="qty"><button onclick="changeQty(\''+safeText(p.id)+'\',-1)">−</button>'+x.qty+'<button onclick="changeQty(\''+safeText(p.id)+'\',1)">+</button></div><b>'+money(Number(p.selling_price)*x.qty)+'</b></div>';
   }).join('') : '<div class="empty">Your cart is empty</div>';
-  const total = cart.reduce((sum,x) => { const p=livePosProducts.find(p=>String(p.id)===String(x.id)); return sum + Number(p.selling_price)*x.qty; },0);
+  const subtotal=getCartSubtotal(),discount=getDiscount(),total=Math.max(0,subtotal-discount);
   $('#cartcount').textContent = cart.reduce((sum,x)=>sum+x.qty,0)+' items';
-  $('#subtotal').textContent = money(total);
+  $('#subtotal').textContent = money(subtotal);
+  if($('#discount-value'))$('#discount-value').textContent=money(discount);
   $('#total').textContent = money(total);
+  updateCashChange();
 }
 
 async function loadPOSCustomers(){
@@ -427,18 +461,50 @@ async function checkout() {
   if (!cart.length) { toast('Add products to the cart first.'); return; }
   const button=$('#checkout-button'),message=$('#checkout-message');
   const paymentMethod=$('#payment').value,customerId=$('#pos-customer').value||null;
+  const subtotal=getCartSubtotal(),discount=getDiscount(),total=Math.max(0,subtotal-discount);
   if(paymentMethod==='credit'&&!customerId){message.textContent='Select a registered customer before creating a credit sale.';toggleCreditCustomer();return;}
+  if(discount>subtotal){message.textContent='Discount cannot exceed the subtotal.';return;}
+  if(paymentMethod==='cash'){
+    const tendered=Number($('#cash-tendered')?.value||0);
+    if(!Number.isFinite(tendered)||tendered<total){message.textContent='Cash received must be at least the sale total.';return;}
+  }
+  const soldItems=cart.map(x=>{const p=livePosProducts.find(y=>String(y.id)===String(x.id));return {id:x.id,name:p?.product_name||'Product',code:p?.product_code||'',qty:x.qty,unitPrice:Number(p?.selling_price||0),lineTotal:Number(p?.selling_price||0)*x.qty};});
+  const customer=(liveCustomers||[]).find(c=>String(c.id)===String(customerId));
   button.disabled=true;button.textContent='Processing…';message.textContent='';
   const items=cart.map(x=>({product_id:x.id,quantity:x.qty}));
-  const {data,error}=await db.rpc('create_sale',{p_shop_id:currentShop.id,p_customer_id:customerId,p_payment_method:paymentMethod,p_items:items,p_discount:0});
+  const {data,error}=await db.rpc('create_sale',{p_shop_id:currentShop.id,p_customer_id:customerId,p_payment_method:paymentMethod,p_items:items,p_discount:discount});
   button.disabled=false;button.textContent='Complete sale';
   if(error){message.textContent='Sale was not completed: '+error.message;return;}
   const result=Array.isArray(data)?data[0]:data;
-  const receipt=result?.receipt_number||result?.receipt_no||result?.sale_id||result?.id||'Sale saved';
+  const receiptNo=result?.receipt_number||result?.receipt_no||result?.sale_id||result?.id||'';
   const pending=paymentMethod==='credit';
-  message.textContent=pending?'Credit sale submitted for approval · '+receipt:'Sale completed successfully · '+receipt;
+  lastReceipt={receiptNo:String(receiptNo||'SALE-'+Date.now()),date:new Date().toLocaleString(),customer:customer?.name||'Walk-in customer',phone:customer?.phone||'',method:paymentMethod,subtotal,discount,total,items:soldItems,status:pending?'PENDING CREDIT APPROVAL':'PAID',cashReceived:paymentMethod==='cash'?Number($('#cash-tendered').value):null,change:paymentMethod==='cash'?Math.max(0,Number($('#cash-tendered').value)-total):null};
+  message.textContent=pending?'Credit sale submitted for approval · '+lastReceipt.receiptNo:'Sale completed successfully · '+lastReceipt.receiptNo;
   toast(pending?'Credit sale awaiting approval.':'Sale saved to BAJAJ database.');
+  await loadReceiptSettings();
+  renderReceipt();
   cart=[];await refreshPOSProducts();renderCart();await loadPOSCustomers();
+  if($('#pos-discount'))$('#pos-discount').value='0';
+  if($('#cash-tendered'))$('#cash-tendered').value='';
+  renderCart();
+}
+
+async function loadReceiptSettings(){
+  const {data,error}=await db.from('shops').select('name,business_phone,business_address,receipt_prefix,receipt_footer,logo_url').eq('id',currentShop.id).single();
+  receiptSettings=error?{name:currentShop.name}:data;
+}
+function renderReceipt(){
+  const host=$('#receipt-preview');if(!host||!lastReceipt)return;
+  const r=lastReceipt,s=receiptSettings||{name:currentShop.name};
+  const rows=r.items.map(x=>'<tr><td>'+safeText(x.name)+'<br><small>'+safeText(x.code)+' × '+x.qty+'</small></td><td style="text-align:right">'+money(x.lineTotal)+'</td></tr>').join('');
+  const textLines=[s.name||currentShop.name,s.business_address||'',s.business_phone||'', 'Receipt: '+r.receiptNo,'Date: '+r.date,'Customer: '+r.customer,'Payment: '+r.method.toUpperCase(),'Status: '+r.status,...r.items.map(x=>x.name+' x '+x.qty+' = '+money(x.lineTotal)),'Subtotal: '+money(r.subtotal),'Discount: '+money(r.discount),'TOTAL: '+money(r.total),r.cashReceived!==null?'Cash received: '+money(r.cashReceived):'',r.change!==null?'Change: '+money(r.change):'',s.receipt_footer||'Thank you for your purchase'].filter(Boolean).join('\n');
+  host.innerHTML='<div class="card" style="margin-top:18px"><div class="cardhead"><h3>Receipt preview</h3><span>'+safeText(r.receiptNo)+'</span></div><div class="receipt-actions"><button class="primary" onclick="window.print()">Print / Save PDF</button><button class="secondary" onclick="shareReceiptWhatsApp()">Share on WhatsApp</button></div><div class="receipt-paper" id="receipt-paper">'+(s.logo_url?'<img class="receipt-logo" src="'+safeText(s.logo_url)+'" alt="Shop logo">':'')+'<h2>'+safeText(s.name||currentShop.name)+'</h2><p>'+safeText(s.business_address||'')+'</p><p>'+safeText(s.business_phone||'')+'</p><hr><p><b>'+safeText(r.status)+'</b></p><p>Receipt: '+safeText(r.receiptNo)+'</p><p>'+safeText(r.date)+'</p><p>Customer: '+safeText(r.customer)+'</p><p>Payment: '+safeText(r.method.toUpperCase())+'</p><table><tbody>'+rows+'</tbody></table><p style="text-align:right">Subtotal: '+money(r.subtotal)+'</p><p style="text-align:right">Discount: '+money(r.discount)+'</p><h2 style="text-align:right">TOTAL: '+money(r.total)+'</h2>'+(r.cashReceived!==null?'<p style="text-align:right">Cash received: '+money(r.cashReceived)+'</p><p style="text-align:right">Change: '+money(r.change)+'</p>':'')+'<hr><p>'+safeText(s.receipt_footer||'Thank you for your purchase')+'</p></div></div>';
+  lastReceipt.shareText=textLines;
+}
+function shareReceiptWhatsApp(){
+  if(!lastReceipt)return;
+  const url='https://wa.me/?text='+encodeURIComponent(lastReceipt.shareText||'BAJAJ receipt '+lastReceipt.receiptNo);
+  window.open(url,'_blank','noopener');
 }
 
 async function salesPage(){
