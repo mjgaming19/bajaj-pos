@@ -200,7 +200,7 @@ async function verifyWorkspace() {
   currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
   document.body.classList.add('authenticated');
-  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','customers','sales'].includes(b.dataset.page); });
+  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['pos','customers','sales','suppliers'].includes(b.dataset.page); });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
@@ -490,7 +490,90 @@ async function editLiveCustomer(id){
   toast('Customer updated.');
   await refreshLiveCustomers();
 }
-function suppliersPage(){ $('#view').innerHTML=heading('PURCHASING','Suppliers','Keep supplier contacts and purchasing details in one place.','<button class="primary" onclick="toast(&quot;Supplier form will be added next.&quot;)">＋ Add supplier</button>')+`<div class="card"><div class="empty">No suppliers added yet.<br><small>Supplier records can be created when the shop starts entering stock.</small></div></div>`}
+let liveSuppliers=[],purchaseOrders=[],purchaseLines=[];
+async function ensurePurchaseProducts(){try{window._bajajPurchaseProducts=await loadLiveInventory();}catch(e){window._bajajPurchaseProducts=[];}}
+async function suppliersPage(){
+  $('#view').innerHTML=heading('SUPPLIERS & PURCHASING','Suppliers & purchases','Manage supplier relationships and receive new stock into BAJAJ inventory.')+
+  '<div class="toolbar"><button class="secondary" onclick="showSupplierTab(\'suppliers\')">Suppliers</button><button class="secondary" onclick="showSupplierTab(\'purchases\')">Purchase orders</button><button class="secondary" onclick="showSupplierTab(\'movements\')">Stock movements</button></div><div id="supplier-workspace">Loading supplier records…</div>';
+  await loadSupplierData();await ensurePurchaseProducts();showSupplierTab('suppliers');
+}
+async function loadSupplierData(){
+  const [sr,pr]=await Promise.all([
+    db.from('suppliers').select('*').eq('shop_id',currentShop.id).order('name'),
+    db.from('purchase_orders').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false})
+  ]);
+  if(sr.error){$('#supplier-workspace').innerHTML='<div class="notice">Could not load suppliers: '+safeText(sr.error.message)+'</div>';return;}
+  if(pr.error){$('#supplier-workspace').innerHTML='<div class="notice">Could not load purchase orders: '+safeText(pr.error.message)+'</div>';return;}
+  liveSuppliers=sr.data||[];purchaseOrders=pr.data||[];
+}
+function showSupplierTab(tab){
+  const root=$('#supplier-workspace');if(!root)return;
+  if(tab==='suppliers'){
+    root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Add supplier</h3><span>BAJAJ supplier directory</span></div><form id="supplier-form" class="formrow" style="align-items:end"><div class="field"><label>Supplier / company name</label><input name="name" required maxlength="160"></div><div class="field"><label>Contact person</label><input name="contact_person" maxlength="120"></div><div class="field"><label>Phone</label><input name="phone" maxlength="40"></div><div class="field"><label>Email</label><input name="email" type="email" maxlength="160"></div><div class="field"><label>Address</label><input name="address" maxlength="500"></div><div class="field"><label>Notes</label><input name="notes" maxlength="500"></div><button class="primary" type="submit">＋ Save supplier</button></form><div id="supplier-message" class="muted"></div></div><div class="card"><div class="cardhead"><h3>Supplier directory</h3><span>'+liveSuppliers.length+' suppliers</span></div>'+(liveSuppliers.length?'<div class="tablecard"><table><thead><tr><th>Supplier</th><th>Contact</th><th>Phone</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead><tbody>'+liveSuppliers.map(x=>'<tr><td><b>'+safeText(x.name||'Unnamed')+'</b><div class="muted">'+safeText(x.address||'')+'</div></td><td>'+safeText(x.contact_person||'—')+'</td><td>'+safeText(x.phone||'—')+'</td><td>'+safeText(x.email||'—')+'</td><td><span class="badge '+(x.is_active===false?'warn':'')+'">'+(x.is_active===false?'Inactive':'Active')+'</span></td><td><button class="secondary" onclick="editSupplier(\''+safeText(x.id)+'\')">Edit</button> <button class="secondary" onclick="toggleSupplier(\''+safeText(x.id)+'\')">'+(x.is_active===false?'Activate':'Deactivate')+'</button></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No suppliers added yet.</div>')+'</div>';
+    $('#supplier-form').addEventListener('submit',saveSupplier);
+  }else if(tab==='purchases'){
+    root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Create purchase order</h3><span>Stock is added only when received</span></div><div class="formrow"><div class="field"><label>Supplier</label><select id="po-supplier"><option value="">Choose supplier</option>'+liveSuppliers.filter(x=>x.is_active!==false).map(x=>'<option value="'+safeText(x.id)+'">'+safeText(x.name)+'</option>').join('')+'</select></div><div class="field"><label>Reference / invoice number</label><input id="po-reference" maxlength="100" placeholder="Supplier invoice number"></div></div><div id="purchase-lines"></div><div class="toolbar"><button class="secondary" onclick="addPurchaseLine()">＋ Add product line</button></div><div class="totalrow final"><span>Purchase total</span><b id="purchase-total">LKR 0.00</b></div><div class="field"><label>Notes</label><input id="po-notes" maxlength="500" placeholder="Optional notes"></div><button class="primary" onclick="createPurchaseOrder()">Save purchase order</button><div id="purchase-message" class="muted" style="margin-top:10px"></div></div><div class="card"><div class="cardhead"><h3>Purchase history</h3><span>'+purchaseOrders.length+' orders</span></div>'+(purchaseOrders.length?'<div class="tablecard"><table><thead><tr><th>Reference</th><th>Supplier</th><th>Date</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>'+purchaseOrders.map(p=>{const sup=liveSuppliers.find(x=>String(x.id)===String(p.supplier_id));return '<tr><td><b>'+safeText(p.reference_no||String(p.id).slice(0,8))+'</b></td><td>'+safeText(sup?.name||'Supplier')+'</td><td>'+new Date(p.created_at).toLocaleDateString()+'</td><td>'+money(Number(p.subtotal||0))+'</td><td><span class="badge '+(p.status==='received'?'':'warn')+'">'+safeText(p.status)+'</span></td><td>'+(p.status==='draft'||p.status==='ordered'?'<button class="primary" onclick="receivePurchase(\''+safeText(p.id)+'\')">Receive stock</button>':'—')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No purchase orders yet.</div>')+'</div>';
+    purchaseLines=[];addPurchaseLine();
+  }else{
+    root.innerHTML='<div class="card"><div class="cardhead"><h3>Recent stock movements</h3><button class="secondary" onclick="showSupplierTab(\'movements\')">↻ Refresh</button></div><div id="movement-list">Loading movements…</div></div>';
+    const {data,error}=await db.from('inventory_movements').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
+    const el=$('#movement-list');if(error){el.innerHTML='<div class="notice">Could not load movements: '+safeText(error.message)+'</div>';return;}
+    const productsNow=await loadLiveInventory();
+    el.innerHTML=data?.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Product</th><th>Movement</th><th>Quantity change</th><th>Notes</th></tr></thead><tbody>'+data.map(m=>'<tr><td>'+new Date(m.created_at).toLocaleString()+'</td><td>'+safeText(productsNow.find(p=>p.id===m.product_id)?.product_name||m.product_id)+'</td><td>'+safeText(m.movement_type)+'</td><td>'+Number(m.quantity_change)>0?'+':''+Number(m.quantity_change)+'</td><td>'+safeText(m.notes||'—')+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No stock movements recorded yet.</div>';
+  }
+}
+async function saveSupplier(e){
+  e.preventDefault();const f=e.currentTarget,v=Object.fromEntries(new FormData(f).entries()),msg=$('#supplier-message');
+  const payload={shop_id:currentShop.id,name:String(v.name||'').trim(),contact_person:String(v.contact_person||'').trim()||null,phone:String(v.phone||'').trim()||null,email:String(v.email||'').trim()||null,address:String(v.address||'').trim()||null,notes:String(v.notes||'').trim()||null,is_active:true};
+  const {error}=await db.from('suppliers').insert(payload);if(error){msg.textContent='Could not save supplier: '+error.message;return;}
+  await loadSupplierData();showSupplierTab('suppliers');toast('Supplier saved.');
+}
+async function editSupplier(id){
+  const x=liveSuppliers.find(v=>String(v.id)===String(id));if(!x)return;
+  const name=prompt('Supplier name:',x.name||'');if(name===null)return;
+  const contact_person=prompt('Contact person:',x.contact_person||'');if(contact_person===null)return;
+  const phone=prompt('Phone:',x.phone||'');if(phone===null)return;
+  const email=prompt('Email:',x.email||'');if(email===null)return;
+  const address=prompt('Address:',x.address||'');if(address===null)return;
+  const {error}=await db.from('suppliers').update({name:name.trim(),contact_person:contact_person.trim()||null,phone:phone.trim()||null,email:email.trim()||null,address:address.trim()||null}).eq('id',id).eq('shop_id',currentShop.id);
+  if(error){alert('Could not update supplier: '+error.message);return;}await loadSupplierData();showSupplierTab('suppliers');
+}
+async function toggleSupplier(id){
+  const x=liveSuppliers.find(v=>String(v.id)===String(id));if(!x)return;
+  const {error}=await db.from('suppliers').update({is_active:x.is_active===false}).eq('id',id).eq('shop_id',currentShop.id);
+  if(error){alert('Could not change supplier status: '+error.message);return;}await loadSupplierData();showSupplierTab('suppliers');
+}
+function addPurchaseLine(){
+  const host=$('#purchase-lines');if(!host)return;
+  const productsNow=window._bajajPurchaseProducts||[];
+  const rowId='pol-'+Math.random().toString(36).slice(2,9);
+  const row=document.createElement('div');row.className='formrow';row.dataset.line=rowId;
+  row.innerHTML='<div class="field"><label>Product</label><select class="po-product"><option value="">Choose product</option>'+productsNow.map(p=>'<option value="'+safeText(p.id)+'">'+safeText(p.product_name)+' · '+safeText(p.product_code)+'</option>').join('')+'</select></div><div class="field"><label>Quantity</label><input class="po-qty" type="number" min="1" step="1" value="1"></div><div class="field"><label>Unit cost (LKR)</label><input class="po-cost" type="number" min="0" step="0.01" value="0"></div><button class="danger" type="button" onclick="this.parentElement.remove();updatePurchaseTotal()">Remove line</button>';
+  host.appendChild(row);row.querySelectorAll('input,select').forEach(el=>el.addEventListener('input',updatePurchaseTotal));
+}
+async function createPurchaseOrder(){
+  const msg=$('#purchase-message'),supplierId=$('#po-supplier')?.value;
+  const lines=[...document.querySelectorAll('#purchase-lines .formrow')].map(row=>({product_id:row.querySelector('.po-product').value,quantity_ordered:Number(row.querySelector('.po-qty').value),unit_cost:Number(row.querySelector('.po-cost').value)}));
+  if(!supplierId){msg.textContent='Choose a supplier.';return;}
+  if(!lines.length||lines.some(x=>!x.product_id||!Number.isInteger(x.quantity_ordered)||x.quantity_ordered<1||!Number.isFinite(x.unit_cost)||x.unit_cost<0)){msg.textContent='Add valid product, quantity and unit cost details to every line.';return;}
+  const subtotal=lines.reduce((a,x)=>a+x.quantity_ordered*x.unit_cost,0);
+  const {data:order,error}=await db.from('purchase_orders').insert({shop_id:currentShop.id,supplier_id:supplierId,reference_no:$('#po-reference').value.trim()||null,status:'draft',subtotal,notes:$('#po-notes').value.trim()||null,created_by:currentUser.id}).select().single();
+  if(error){msg.textContent='Could not create purchase order: '+error.message;return;}
+  const {error:itemError}=await db.from('purchase_items').insert(lines.map(x=>({...x,purchase_id:order.id})));
+  if(itemError){await db.from('purchase_orders').delete().eq('id',order.id);msg.textContent='Could not save purchase lines: '+itemError.message;return;}
+  toast('Purchase order saved.');await loadSupplierData();showSupplierTab('purchases');
+}
+function updatePurchaseTotal(){
+  const total=[...document.querySelectorAll('#purchase-lines .formrow')].reduce((a,row)=>a+Number(row.querySelector('.po-qty').value||0)*Number(row.querySelector('.po-cost').value||0),0);
+  const el=$('#purchase-total');if(el)el.textContent=money(total);
+}
+async function receivePurchase(id){
+  if(!confirm('Receive this purchase? The ordered quantities will be added to inventory and product cost prices recalculated.'))return;
+  const {data,error}=await db.rpc('receive_purchase',{p_purchase_id:id});
+  if(error){toast('Could not receive purchase: '+error.message);return;}
+  toast('Stock received: '+(data?.quantity_received||0)+' units.');
+  await loadSupplierData();showSupplierTab('purchases');await refreshLiveInventory();
+}
 function reportsPage(){ $('#view').innerHTML=heading('BUSINESS INSIGHTS','Reports','Sales, gross profit, stock value and outstanding credit.')+`<div class="stats"><div class="stat"><div class="stathead">Gross sales</div><strong>${money(284500)}</strong><small class="muted">Demo period</small></div><div class="stat"><div class="stathead">Estimated gross profit</div><strong>${money(68400)}</strong><small class="muted">Based on sample costs</small></div><div class="stat"><div class="stathead">Stock value (cost)</div><strong>${money(1250000)}</strong><small class="muted">Sample figure</small></div><div class="stat"><div class="stathead">Credit outstanding</div><strong>${money(customers.reduce((a,c)=>a+c.balance,0))}</strong><small class="muted">Sample figure</small></div></div><div class="notice">These are illustrative demo figures. Live reports will calculate from actual shop transactions.</div><div class="card"><h3>Report sections</h3><p class="muted">Daily sales · Monthly sales · Product performance · Gross profit · Stock movement · Customer balances · Payment methods</p></div>`}
 function usersPage(){ $('#view').innerHTML=heading('ACCESS CONTROL','User management','Three permission levels, with you as the platform owner.')+`<div class="grid2"><div class="card"><div class="cardhead"><h3>Platform owner</h3><span class="badge blue">You</span></div><h2>Main Admin</h2><p class="muted">Cross-shop platform access, shop management and system oversight.</p></div><div class="card"><div class="cardhead"><h3>Shop access roles</h3></div><div class="cartline"><b>Sub-admin</b><span class="badge">Shop manager</span></div><div class="cartline"><b>POS user</b><span class="badge warn">Cashier</span></div><p class="muted">Role permissions will be enforced by the secure backend in the production version.</p></div></div><div class="notice" style="margin-top:16px">Demo login is visual only. Real authentication, invitations and audit logs are not connected yet.</div>`}
 function settingsPage(){ $('#view').innerHTML=heading('PREFERENCES','Settings','Configure the BAJAJ workspace.')+`<div class="card"><h3>Business profile</h3><div class="formrow"><div class="field"><label>Business display name</label><input value="BAJAJ"></div><div class="field"><label>Currency</label><input value="LKR — Sri Lankan Rupee" disabled></div><div class="field"><label>Receipt prefix</label><input value="BAJ"></div><div class="field"><label>Theme</label><input value="Dark / Light" disabled></div></div><button class="primary" onclick="toast('Settings are demo-only for now.')">Save changes</button></div><div class="card" style="margin-top:15px"><h3>Hardware compatibility</h3><p class="muted">USB barcode scanner · ESC/POS thermal receipt printer · PDF receipt export · WhatsApp sharing (production integration)</p></div>`}
