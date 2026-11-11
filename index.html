@@ -65,6 +65,7 @@ body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:no
     <button data-page="reports"><span class="ico">▥</span>Reports</button>
   </nav></div>
   <div><div class="navlabel">SYSTEM</div><nav class="nav">
+    <button data-page="shops"><span class="ico">▣</span>Shop Management</button>
     <button data-page="users"><span class="ico">♧</span>User Management</button>
     <button data-page="settings"><span class="ico">⚙</span>Settings</button>
   </nav></div>
@@ -221,7 +222,7 @@ async function verifyWorkspace() {
   currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
   document.body.classList.add('authenticated');
-  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['dashboard','pos','inventory','customers','sales','suppliers','reports'].includes(b.dataset.page); });
+  document.querySelectorAll('.nav button').forEach(b => { b.disabled = !['dashboard','pos','inventory','customers','sales','suppliers','reports','shops','users','settings'].includes(b.dataset.page); });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
@@ -269,23 +270,46 @@ let customers=[{name:'Nimal Perera',phone:'077 123 4567',balance:3200},{name:'Ka
 const money=n=>'LKR '+Number(n).toLocaleString('en-LK');
 const $=s=>document.querySelector(s);
 function toast(t){let e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-function page(p){document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#crumb').textContent=({pos:'Point of Sale',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
+function page(p){document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===p));$('#crumb').textContent=({pos:'Point of Sale',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));
 $('#menu').onclick=()=>$('#sidebar').classList.toggle('open');
 $('#theme').onclick=()=>{let d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';$('#theme').textContent=d.dataset.theme==='dark'?'☀':'☾'};
 function heading(k,t,s,action=''){return `<div class="heading"><div><div class="eyebrow">${k}</div><h1>${t}</h1><p>${s}</p></div>${action}</div>`}
-function dashboard(){ $('#view').innerHTML=heading('OVERVIEW','Good day, Main Admin 👋','Here is what is happening at BAJAJ today.','<button class="primary" onclick="page(&quot;pos&quot;)">＋ New sale</button>')+`
-<div class="stats">
-<div class="stat"><div class="stathead">Today's sales <span class="staticon">↗</span></div><strong>${money(92500)}</strong><small class="up">↑ 12.8% <span class="muted">vs yesterday</span></small></div>
-<div class="stat"><div class="stathead">Transactions <span class="staticon">▣</span></div><strong>28</strong><small class="muted">Today's completed sales</small></div>
-<div class="stat"><div class="stathead">Inventory items <span class="staticon">▤</span></div><strong>486</strong><small class="muted">Across 8 categories</small></div>
-<div class="stat"><div class="stathead">Outstanding credit <span class="staticon">◷</span></div><strong>${money(18450)}</strong><small class="muted">Across 6 customers</small></div>
-</div>
-<div class="grid2"><div class="card"><div class="cardhead"><h3>Sales overview</h3><span>Last 7 days · Demo data</span></div><div class="chart">${[42,60,51,76,62,88,70].map((v,i)=>`<div class="barwrap"><div class="bar" style="height:${v}%"></div><small>${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i]}</small></div>`).join('')}</div></div>
-<div class="card"><div class="cardhead"><h3>Stock alerts</h3><span>Needs attention</span></div>
-${products.filter(p=>p.qty<10).map(p=>`<div class="cartline"><div><b>${p.part}</b><div class="muted">${p.code}</div></div><span class="badge warn">${p.qty} left</span></div>`).join('')}
-<div style="margin-top:14px"><button class="secondary" onclick="page('inventory')">View inventory →</button></div></div></div>
-<div class="card" style="margin-top:17px"><div class="cardhead"><h3>Recent transactions</h3><button class="secondary" onclick="page('sales')">View all</button></div>${salesTable(sales.slice(0,3))}</div>`}
+async function dashboard(){
+  $('#view').innerHTML=heading('OVERVIEW','Good day, Main Admin 👋','Live figures from your selected BAJAJ shop.','<button class="primary" onclick="page(&quot;pos&quot;)">＋ New sale</button>')+
+  '<div id="dashboard-live"><p class="muted">Loading live business figures…</p></div>';
+  const [salesResult,productsResult,customersResult]=await Promise.all([
+    db.from('sales').select('id,total,status,sold_at,payment_method,payment_status,receipt_number,receipt_no,customer_id').eq('shop_id',currentShop.id).order('sold_at',{ascending:false}).limit(8),
+    loadLiveInventory(),
+    db.from('customers').select('id',{count:'exact',head:true}).eq('shop_id',currentShop.id)
+  ]);
+  const host=$('#dashboard-live');if(!host)return;
+  if(salesResult.error){host.innerHTML='<div class="notice">Could not load dashboard sales: '+safeText(salesResult.error.message)+'</div>';return;}
+  if(productsResult?.error){host.innerHTML='<div class="notice">Could not load inventory: '+safeText(productsResult.error.message)+'</div>';return;}
+  const rows=salesResult.data||[],products=productsResult||[],completed=rows.filter(x=>x.status==='completed');
+  const dayKey=new Date().toLocaleDateString();
+  const today=completed.filter(x=>x.sold_at&&new Date(x.sold_at).toLocaleDateString()===dayKey);
+  const allSales=completed.reduce((n,x)=>n+Number(x.total||0),0);
+  const todaySales=today.reduce((n,x)=>n+Number(x.total||0),0);
+  const low=products.filter(p=>Number(p.quantity||0)<=Number(p.low_stock_threshold??5));
+  const recent=rows.slice(0,5);
+  host.innerHTML='<div class="stats">'+
+    '<div class="stat"><div class="stathead">Today’s sales</div><strong>'+money(todaySales)+'</strong><small class="muted">'+today.length+' completed transactions</small></div>'+
+    '<div class="stat"><div class="stathead">All-time sales</div><strong>'+money(allSales)+'</strong><small class="muted">'+completed.length+' recent records loaded</small></div>'+
+    '<div class="stat"><div class="stathead">Inventory products</div><strong>'+products.length+'</strong><small class="muted">Live product count</small></div>'+
+    '<div class="stat"><div class="stathead">Low-stock products</div><strong>'+low.length+'</strong><small class="muted">At or below threshold</small></div></div>'+
+    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Shop overview</h3><span>'+safeText(currentShop.currency||'LKR')+'</span></div>'+
+    '<div class="cartline"><span>Selected shop</span><b>'+safeText(currentShop.name)+'</b></div>'+
+    '<div class="cartline"><span>Registered customers</span><b>'+(customersResult.error?'—':Number(customersResult.count||0))+'</b></div>'+
+    '<div class="cartline"><span>Stock value at cost</span><b>'+money(products.reduce((n,p)=>n+Number(p.quantity||0)*Number(p.cost_price||0),0))+'</b></div>'+
+    '<div class="cartline"><span>Pending credit approvals</span><b>'+rows.filter(x=>x.status==='pending_approval').length+'</b></div>'+
+    '<div style="margin-top:14px"><button class="secondary" onclick="page(\'shops\')">Manage shops →</button></div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Stock alerts</h3><span>'+low.length+' need attention</span></div>'+
+    (low.length?low.slice(0,6).map(p=>'<div class="cartline"><div><b>'+safeText(p.product_name)+'</b><div class="muted">'+safeText(p.product_code)+'</div></div><span class="badge warn">'+Number(p.quantity||0)+' left</span></div>').join(''):'<div class="empty">No low-stock alerts right now.</div>')+
+    '<div style="margin-top:14px"><button class="secondary" onclick="page(\'inventory\')">Open inventory →</button></div></div></div>'+
+    '<div class="card" style="margin-top:17px"><div class="cardhead"><h3>Recent transactions</h3><button class="secondary" onclick="page(\'sales\')">View all</button></div>'+
+    (recent.length?'<div class="tablecard"><table><thead><tr><th>Receipt</th><th>Date</th><th>Payment</th><th>Amount</th><th>Status</th></tr></thead><tbody>'+recent.map(x=>'<tr><td><b>'+safeText(x.receipt_number||x.receipt_no||String(x.id).slice(0,8))+'</b></td><td>'+ (x.sold_at?new Date(x.sold_at).toLocaleString():'—')+'</td><td>'+safeText(x.payment_method||'—')+'</td><td><b>'+money(Number(x.total||0))+'</b></td><td><span class="badge '+(x.status==='completed'?'':'warn')+'">'+safeText(x.status)+'</span></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No transactions recorded yet.</div>')+'</div>';
+}
 function salesTable(rows){return `<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead><tbody>${rows.map(s=>`<tr><td><b>${s.id}</b></td><td>${s.customer}</td><td class="muted">${s.date}</td><td><b>${money(s.total)}</b></td><td><span class="badge ${s.status==='Credit'?'warn':''}">${s.status}</span></td></tr>`).join('')}</tbody></table>`}
 async function inventory(){
   $('#view').innerHTML=heading('STOCK CONTROL','Inventory','Live stock levels, product details and recorded stock adjustments.')+
@@ -684,6 +708,45 @@ async function reportsPage(){
     (low.length?'<div class="tablecard"><table><thead><tr><th>Product</th><th>Code</th><th>In stock</th><th>Alert at</th></tr></thead><tbody>'+low.map(p=>'<tr><td><b>'+safeText(p.product_name)+'</b></td><td>'+safeText(p.product_code)+'</td><td><span class="badge warn">'+Number(p.quantity||0)+'</span></td><td>'+Number(p.low_stock_threshold??5)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No products are currently below their alert threshold.</div>')+'</div>';
 }
 
+async function shopsPage(){
+  $('#view').innerHTML=heading('PLATFORM ADMIN','Shop management','Create and manage separate BAJAJ shop workspaces. Each shop has its own inventory, customers and sales.')+
+  '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Create a shop</h3><span>Platform owner only</span></div>'+
+  '<form id="shop-create-form" class="formrow" style="align-items:end">'+
+  '<div class="field"><label>Shop / business name</label><input name="name" required maxlength="120" placeholder="e.g. BAJAJ Kandy"></div>'+
+  '<div class="field"><label>Unique shop slug</label><input name="slug" required maxlength="80" pattern="[a-z0-9-]+" placeholder="e.g. bajaj-kandy"></div>'+
+  '<div class="field"><label>Currency</label><select name="currency"><option value="LKR">LKR — Sri Lankan Rupee</option></select></div>'+
+  '<button class="primary" type="submit">＋ Create shop</button></form><div id="shop-form-message" class="muted"></div></div>'+
+  '<div class="card"><div class="cardhead"><h3>All shops</h3><button class="secondary" onclick="loadPlatformShops()">↻ Refresh</button></div><div id="platform-shop-list">Loading shops…</div></div>';
+  $('#shop-create-form').addEventListener('submit',createPlatformShop);
+  await loadPlatformShops();
+}
+async function loadPlatformShops(){
+  const host=$('#platform-shop-list');if(!host)return;
+  const {data,error}=await db.from('shops').select('id,name,slug,currency').order('name');
+  if(error){host.innerHTML='<div class="notice">Could not load shops: '+safeText(error.message)+'</div>';return;}
+  const rows=data||[];
+  host.innerHTML=rows.length?'<div class="tablecard"><table><thead><tr><th>Shop</th><th>Slug</th><th>Currency</th><th>Workspace</th><th>Action</th></tr></thead><tbody>'+
+    rows.map(x=>'<tr><td><b>'+safeText(x.name)+'</b></td><td>'+safeText(x.slug)+'</td><td>'+safeText(x.currency||'LKR')+'</td><td><span class="badge '+(String(x.id)===String(currentShop.id)?'blue':'')+'">'+(String(x.id)===String(currentShop.id)?'Currently selected':'Available')+'</span></td><td><button class="secondary" onclick="selectPlatformShop(\''+safeText(x.id)+'\')">'+(String(x.id)===String(currentShop.id)?'Selected':'Open shop')+'</button></td></tr>').join('')+
+    '</tbody></table></div>':'<div class="empty">No shops found.</div>';
+}
+async function createPlatformShop(event){
+  event.preventDefault();const form=event.currentTarget,msg=$('#shop-form-message');
+  const values=Object.fromEntries(new FormData(form).entries());
+  const name=String(values.name||'').trim(),slug=String(values.slug||'').trim().toLowerCase();
+  if(!name||! /^[a-z0-9-]+$/.test(slug)){msg.textContent='Enter a shop name and a slug using lowercase letters, numbers and hyphens.';return;}
+  const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Creating…';msg.textContent='';
+  const {data,error}=await db.from('shops').insert({name,slug,currency:values.currency||'LKR'}).select('id,name,slug,currency').single();
+  button.disabled=false;button.textContent='＋ Create shop';
+  if(error){msg.textContent='Could not create shop: '+error.message;return;}
+  form.reset();msg.textContent='Shop created successfully. You can open it from the shop list.';
+  await loadPlatformShops();toast('New shop created.');
+}
+async function selectPlatformShop(id){
+  const {data,error}=await db.from('shops').select('id,name,slug,currency').eq('id',id).single();
+  if(error){toast('Could not open shop: '+error.message);return;}
+  currentShop=data;document.querySelector('.sidefoot span').textContent=currentShop.name+' · Supabase connected';
+  toast('Switched to '+currentShop.name);await page('dashboard');
+}
 function usersPage(){ $('#view').innerHTML=heading('ACCESS CONTROL','User management','Three permission levels, with you as the platform owner.')+`<div class="grid2"><div class="card"><div class="cardhead"><h3>Platform owner</h3><span class="badge blue">You</span></div><h2>Main Admin</h2><p class="muted">Cross-shop platform access, shop management and system oversight.</p></div><div class="card"><div class="cardhead"><h3>Shop access roles</h3></div><div class="cartline"><b>Sub-admin</b><span class="badge">Shop manager</span></div><div class="cartline"><b>POS user</b><span class="badge warn">Cashier</span></div><p class="muted">Role permissions will be enforced by the secure backend in the production version.</p></div></div><div class="notice" style="margin-top:16px">Demo login is visual only. Real authentication, invitations and audit logs are not connected yet.</div>`}
 function settingsPage(){ $('#view').innerHTML=heading('PREFERENCES','Settings','Configure the BAJAJ workspace.')+`<div class="card"><h3>Business profile</h3><div class="formrow"><div class="field"><label>Business display name</label><input value="BAJAJ"></div><div class="field"><label>Currency</label><input value="LKR — Sri Lankan Rupee" disabled></div><div class="field"><label>Receipt prefix</label><input value="BAJ"></div><div class="field"><label>Theme</label><input value="Dark / Light" disabled></div></div><button class="primary" onclick="toast('Settings are demo-only for now.')">Save changes</button></div><div class="card" style="margin-top:15px"><h3>Hardware compatibility</h3><p class="muted">USB barcode scanner · ESC/POS thermal receipt printer · PDF receipt export · WhatsApp sharing (production integration)</p></div>`}
 initializeApp();
