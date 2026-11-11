@@ -34,7 +34,7 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 .auth-error{color:var(--red);font-size:12px;min-height:18px;margin-top:10px}
 body:not(.authenticated) .app,body:not(.authenticated) .toast{display:none}
 body.authenticated #auth-screen{display:none}
-body.authenticated .nav button{opacity:.45;pointer-events:none;cursor:not-allowed}
+body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -200,11 +200,12 @@ async function verifyWorkspace() {
   currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { document.querySelector('#auth-error').textContent = 'No shop is assigned to this account yet.'; return; }
   document.body.classList.add('authenticated');
+  document.querySelectorAll('.nav button').forEach(b => { b.disabled = b.dataset.page !== 'pos'; });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'Main Admin';
   document.querySelector('.sidefoot strong').textContent = 'Main Admin · Connected';
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
   document.querySelector('#view').innerHTML =
-    heading('LIVE WORKSPACE', 'Welcome to BAJAJ', 'Your Main Admin account is connected to the live database.') +
+    heading('LIVE WORKSPACE', 'Welcome to BAJAJ', 'Your Main Admin account is connected to the live database.', '<button class="primary" onclick="page(&quot;pos&quot;)">Open Point of Sale →</button>') +
     '<div class="stats"><div class="stat"><div class="stathead">Inventory products</div><strong id="live-product-count">—</strong><small class="muted">Live database count</small></div><div class="stat"><div class="stathead">Shop</div><strong>' + safeText(currentShop.name) + '</strong><small class="muted">Workspace connected</small></div></div>' +
     '<div class="card"><div class="cardhead"><h3>Live inventory</h3><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div><div id="live-inventory"><p class="muted">Loading live inventory…</p></div></div>' +
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add a spare part</h3><span>Saved directly to Supabase</span></div><form id="new-product-form" class="formrow" style="align-items:end"><div class="field"><label>Product code</label><input name="product_code" required placeholder="e.g. BAJ-001"></div><div class="field"><label>Product name</label><input name="product_name" required placeholder="e.g. Brake Shoe Set"></div><div class="field"><label>Category</label><input name="category" placeholder="e.g. Brakes"></div><div class="field"><label>Quantity</label><input name="quantity" type="number" min="0" step="1" value="0" required></div><div class="field"><label>Cost price (LKR)</label><input name="cost_price" type="number" min="0" step="0.01" required></div><div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" required></div><button class="primary" type="submit">＋ Save product</button></form><div id="product-form-message" class="muted" style="font-size:12px;margin-top:8px"></div></div>' +
@@ -269,13 +270,100 @@ function inventory(){ $('#view').innerHTML=heading('STOCK CONTROL','Inventory','
 function inventoryTable(rows){return `<table><thead><tr><th>Product</th><th>Product code</th><th>Part number</th><th>Category</th><th>Cost</th><th>Selling price</th><th>Stock</th></tr></thead><tbody>${rows.map(p=>`<tr><td><b>${p.part}</b></td><td>${p.code}</td><td class="muted">${p.oem}</td><td>${p.category}</td><td>${money(p.cost)}</td><td><b>${money(p.price)}</b></td><td><span class="badge ${p.qty<10?'warn':''}">${p.qty}</span></td></tr>`).join('')}</tbody></table>`}
 function filterInventory(){let q=$('#invsearch').value.toLowerCase();$('#invtable').innerHTML=inventoryTable(products.filter(p=>(p.part+p.code+p.oem+p.category).toLowerCase().includes(q)))}
 function addProduct(){let name=prompt('Product name');if(!name)return;let code='BAJ-'+String(products.length+1).padStart(3,'0');products.push({id:Date.now(),code,part:name,oem:'—',category:'General',price:0,cost:0,qty:0,icon:'⚙'});inventory()}
-function pos(){ $('#view').innerHTML=heading('CHECKOUT','Point of Sale','Search or scan a product, add it to the cart and complete the sale.')+`<div class="poslayout"><div class="card"><div class="toolbar"><input class="search" id="possearch" placeholder="Search name, product code or barcode…" oninput="filterPOS()"></div><div class="productgrid" id="productgrid">${productCards(products)}</div></div><div class="card"><div class="cardhead"><h3>Current order</h3><span id="cartcount">0 items</span></div><div class="field"><label>Customer</label><select id="customer"><option>Walk-in customer</option>${customers.map(c=>`<option>${c.name}</option>`).join('')}</select></div><div id="cartlines" style="margin:12px 0"><div class="empty">Your cart is empty</div></div><div class="totalrow"><span>Subtotal</span><b id="subtotal">${money(0)}</b></div><div class="totalrow"><span>Discount</span><b>${money(0)}</b></div><div class="totalrow final"><span>Total</span><span id="total">${money(0)}</span></div><div class="field" style="margin:12px 0"><label>Payment method</label><select id="payment"><option>Cash</option><option>Card</option><option>Credit (owner approval)</option></select></div><button class="primary" style="width:100%" onclick="checkout()">Complete sale</button><p class="muted" style="font-size:10px;line-height:1.5">Credit sales require owner approval. Demo only — no real payment is processed.</p></div></div>`;renderCart()}
-function productCards(rows){return rows.map(p=>`<button class="product" onclick="addCart(${p.id})"><div class="particon">${p.icon}</div><b>${p.part}</b><small>${p.code} · Stock ${p.qty}</small><strong>${money(p.price)}</strong></button>`).join('')}
-function filterPOS(){let q=$('#possearch').value.toLowerCase();$('#productgrid').innerHTML=productCards(products.filter(p=>(p.part+p.code+p.oem).toLowerCase().includes(q)))}
-function addCart(id){let p=products.find(x=>x.id===id);if(!p||p.qty<1){toast('This item is out of stock.');return}let x=cart.find(x=>x.id===id);if(x){if(x.qty>=p.qty){toast('Not enough stock.');return}x.qty++}else cart.push({id,qty:1});renderCart()}
-function changeQty(id,d){let x=cart.find(x=>x.id===id),p=products.find(x=>x.id===id);if(!x)return;x.qty+=d;if(x.qty<=0)cart=cart.filter(x=>x.id!==id);if(x&&x.qty>p.qty){x.qty=p.qty;toast('Not enough stock.')}renderCart()}
-function renderCart(){let el=$('#cartlines');if(!el)return;el.innerHTML=cart.length?cart.map(x=>{let p=products.find(p=>p.id===x.id);return `<div class="cartline"><div><b>${p.part}</b><div class="muted">${money(p.price)} each</div></div><div class="qty"><button onclick="changeQty(${p.id},-1)">−</button>${x.qty}<button onclick="changeQty(${p.id},1)">+</button></div><b>${money(p.price*x.qty)}</b></div>`}).join(''):'<div class="empty">Your cart is empty</div>';let total=cart.reduce((a,x)=>a+products.find(p=>p.id===x.id).price*x.qty,0);$('#cartcount').textContent=cart.reduce((a,x)=>a+x.qty,0)+' items';$('#subtotal').textContent=money(total);$('#total').textContent=money(total)}
-function checkout(){if(!cart.length){toast('Add products to the cart first.');return}let method=$('#payment').value;if(method.startsWith('Credit')){let ok=confirm('Demo owner approval: approve this credit sale?');if(!ok){toast('Credit sale not approved.');return}}let total=cart.reduce((a,x)=>a+products.find(p=>p.id===x.id).price*x.qty,0);cart.forEach(x=>products.find(p=>p.id===x.id).qty-=x.qty);let customer=$('#customer').value;let id='BAJ-'+String(125+sales.length).padStart(6,'0');sales.unshift({id,customer,date:'Just now',total,status:method.startsWith('Credit')?'Credit':'Paid',method});if(method.startsWith('Credit')){let c=customers.find(c=>c.name===customer);if(c)c.balance+=total;else customers.push({name:customer,phone:'—',balance:total})}cart=[];toast('Demo sale completed · '+id);pos()}
+let livePosProducts = [];
+
+async function pos() {
+  cart = [];
+  $('#view').innerHTML = heading('CHECKOUT','Point of Sale','Live BAJAJ products · Sales are saved securely to Supabase.') +
+    '<div class="poslayout"><div class="card"><div class="toolbar"><input class="search" id="possearch" placeholder="Search product name or code…" oninput="filterPOS()"></div><div id="pos-loading" class="muted">Loading live products…</div><div class="productgrid" id="productgrid"></div></div>' +
+    '<div class="card"><div class="cardhead"><h3>Current order</h3><span id="cartcount">0 items</span></div><div id="cartlines" style="margin:12px 0"><div class="empty">Your cart is empty</div></div><div class="totalrow"><span>Subtotal</span><b id="subtotal">'+money(0)+'</b></div><div class="totalrow"><span>Discount</span><b>'+money(0)+'</b></div><div class="totalrow final"><span>Total</span><span id="total">'+money(0)+'</span></div><div class="field" style="margin:12px 0"><label>Payment method</label><select id="payment"><option value="cash">Cash</option><option value="card">Card</option></select></div><button class="primary" id="checkout-button" style="width:100%" onclick="checkout()">Complete sale</button><p class="muted" style="font-size:10px;line-height:1.5">Checkout checks stock and records the sale in one secure database transaction. Credit sales will be enabled with customer accounts and approval workflow.</p><div id="checkout-message" class="muted" style="font-size:12px;margin-top:10px"></div></div></div>';
+  await refreshPOSProducts();
+}
+
+async function refreshPOSProducts() {
+  const loading = $('#pos-loading');
+  if (loading) loading.textContent = 'Loading live products…';
+  try {
+    livePosProducts = await loadLiveInventory();
+    renderPOSProducts(livePosProducts);
+    if (loading) loading.textContent = livePosProducts.length ? '' : 'No products in inventory yet. Add products from the inventory form.';
+  } catch (error) {
+    if (loading) loading.textContent = 'Could not load products: ' + error.message;
+  }
+}
+
+function renderPOSProducts(rows) {
+  const grid = $('#productgrid');
+  if (!grid) return;
+  grid.innerHTML = rows.map(p => '<button class="product" '+(Number(p.quantity) < 1 ? 'disabled style="opacity:.45"' : '')+' onclick="addCart(\''+safeText(p.id)+'\')"><div class="particon">⚙</div><b>'+safeText(p.product_name)+'</b><small>'+safeText(p.product_code)+' · Stock '+Number(p.quantity)+'</small><strong>'+money(Number(p.selling_price))+'</strong></button>').join('');
+}
+
+function filterPOS() {
+  const q = ($('#possearch')?.value || '').toLowerCase();
+  renderPOSProducts(livePosProducts.filter(p => (String(p.product_name)+' '+String(p.product_code)+' '+String(p.category||'')).toLowerCase().includes(q)));
+}
+
+function addCart(id) {
+  const p = livePosProducts.find(x => String(x.id) === String(id));
+  if (!p || Number(p.quantity) < 1) { toast('This item is out of stock.'); return; }
+  const item = cart.find(x => String(x.id) === String(id));
+  const already = item ? item.qty : 0;
+  if (already >= Number(p.quantity)) { toast('Not enough stock.'); return; }
+  if (item) item.qty++; else cart.push({id:p.id,qty:1});
+  renderCart();
+}
+
+function changeQty(id, delta) {
+  const item = cart.find(x => String(x.id) === String(id));
+  const p = livePosProducts.find(x => String(x.id) === String(id));
+  if (!item || !p) return;
+  item.qty += delta;
+  if (item.qty <= 0) cart = cart.filter(x => String(x.id) !== String(id));
+  if (item && item.qty > Number(p.quantity)) { item.qty = Number(p.quantity); toast('Not enough stock.'); }
+  renderCart();
+}
+
+function renderCart() {
+  const el = $('#cartlines');
+  if (!el) return;
+  el.innerHTML = cart.length ? cart.map(x => {
+    const p = livePosProducts.find(p => String(p.id) === String(x.id));
+    return '<div class="cartline"><div><b>'+safeText(p.product_name)+'</b><div class="muted">'+money(Number(p.selling_price))+' each</div></div><div class="qty"><button onclick="changeQty(\''+safeText(p.id)+'\',-1)">−</button>'+x.qty+'<button onclick="changeQty(\''+safeText(p.id)+'\',1)">+</button></div><b>'+money(Number(p.selling_price)*x.qty)+'</b></div>';
+  }).join('') : '<div class="empty">Your cart is empty</div>';
+  const total = cart.reduce((sum,x) => { const p=livePosProducts.find(p=>String(p.id)===String(x.id)); return sum + Number(p.selling_price)*x.qty; },0);
+  $('#cartcount').textContent = cart.reduce((sum,x)=>sum+x.qty,0)+' items';
+  $('#subtotal').textContent = money(total);
+  $('#total').textContent = money(total);
+}
+
+async function checkout() {
+  if (!cart.length) { toast('Add products to the cart first.'); return; }
+  const button = $('#checkout-button');
+  const message = $('#checkout-message');
+  button.disabled = true; button.textContent = 'Processing…'; message.textContent = '';
+  const paymentMethod = $('#payment').value;
+  const items = cart.map(x => ({product_id:x.id,quantity:x.qty}));
+  const { data, error } = await db.rpc('create_sale', {
+    p_shop_id: currentShop.id,
+    p_customer_id: null,
+    p_payment_method: paymentMethod,
+    p_items: items,
+    p_discount: 0
+  });
+  button.disabled = false; button.textContent = 'Complete sale';
+  if (error) {
+    message.textContent = 'Sale was not completed: ' + error.message;
+    return;
+  }
+  const result = Array.isArray(data) ? data[0] : data;
+  const receipt = result?.receipt_number || result?.receipt_no || result?.sale_id || result?.id || 'Sale saved';
+  message.textContent = 'Sale completed successfully · ' + receipt;
+  toast('Sale saved to BAJAJ database.');
+  cart = [];
+  await refreshPOSProducts();
+  renderCart();
+}
+
 function salesPage(){ $('#view').innerHTML=heading('TRANSACTIONS','Sales history','Review completed sales and payment status.')+`<div class="toolbar"><input class="search" placeholder="Search receipt or customer…" oninput="filterSales(this.value)"></div><div class="card tablecard" id="salestable">${salesTable(sales)}</div>`}
 function filterSales(q){$('#salestable').innerHTML=salesTable(sales.filter(s=>(s.id+s.customer+s.status).toLowerCase().includes(q.toLowerCase())))}
 function customersPage(){ $('#view').innerHTML=heading('CUSTOMER ACCOUNTS','Customers & credit','Track customer balances, credit sales and repayments.')+`<div class="stats"><div class="stat"><div class="stathead">Outstanding credit</div><strong>${money(customers.reduce((a,c)=>a+c.balance,0))}</strong><small class="muted">Demo balance</small></div><div class="stat"><div class="stathead">Customer accounts</div><strong>${customers.length}</strong><small class="muted">Registered customers</small></div></div><div class="card tablecard"><table><thead><tr><th>Customer</th><th>Phone</th><th>Outstanding balance</th><th>Action</th></tr></thead><tbody>${customers.map((c,i)=>`<tr><td><b>${c.name}</b></td><td>${c.phone}</td><td><b>${money(c.balance)}</b></td><td><button class="secondary" onclick="repay(${i})">Record repayment</button></td></tr>`).join('')}</tbody></table></div>`}
