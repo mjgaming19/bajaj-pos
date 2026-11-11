@@ -519,7 +519,7 @@ function showSupplierTab(tab){
     const {data,error}=await db.from('inventory_movements').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
     const el=$('#movement-list');if(error){el.innerHTML='<div class="notice">Could not load movements: '+safeText(error.message)+'</div>';return;}
     const productsNow=await loadLiveInventory();
-    el.innerHTML=data?.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Product</th><th>Movement</th><th>Quantity change</th><th>Notes</th></tr></thead><tbody>'+data.map(m=>'<tr><td>'+new Date(m.created_at).toLocaleString()+'</td><td>'+safeText(productsNow.find(p=>p.id===m.product_id)?.product_name||m.product_id)+'</td><td>'+safeText(m.movement_type)+'</td><td>'+Number(m.quantity_change)>0?'+':''+Number(m.quantity_change)+'</td><td>'+safeText(m.notes||'—')+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No stock movements recorded yet.</div>';
+    el.innerHTML=data?.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Product</th><th>Movement</th><th>Quantity change</th><th>Notes</th></tr></thead><tbody>'+data.map(m=>'<tr><td>'+new Date(m.created_at).toLocaleString()+'</td><td>'+safeText(productsNow.find(p=>p.id===m.product_id)?.product_name||m.product_id)+'</td><td>'+safeText(m.movement_type)+'</td><td>'+(Number(m.quantity_change)>0?'+':'')+Number(m.quantity_change)+'</td><td>'+safeText(m.notes||'—')+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No stock movements recorded yet.</div>';
   }
 }
 async function saveSupplier(e){
