@@ -158,3 +158,37 @@ drop trigger if exists bajaj_guard_shop_membership_changes on public.shop_member
 create trigger bajaj_guard_shop_membership_changes
 before insert or update or delete on public.shop_members
 for each row execute function public.guard_shop_membership_changes();
+
+-- Reusable SECURITY DEFINER check avoids recursive shop_members RLS lookups.
+create or replace function public.can_manage_shop_members(p_shop_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    exists (select 1 from public.platform_admins pa where pa.user_id = auth.uid())
+    or exists (
+      select 1 from public.shop_members sm
+      where sm.shop_id = p_shop_id
+        and sm.user_id = auth.uid()
+        and sm.role = 'sub_admin'
+    );
+$$;
+
+drop policy if exists "Platform admins and sub-admins add shop members" on public.shop_members;
+create policy "Platform admins and sub-admins add shop members"
+on public.shop_members for insert to authenticated
+with check (public.can_manage_shop_members(shop_id));
+
+drop policy if exists "Platform admins and sub-admins update shop members" on public.shop_members;
+create policy "Platform admins and sub-admins update shop members"
+on public.shop_members for update to authenticated
+using (public.can_manage_shop_members(shop_id))
+with check (public.can_manage_shop_members(shop_id));
+
+drop policy if exists "Platform admins and sub-admins remove shop members" on public.shop_members;
+create policy "Platform admins and sub-admins remove shop members"
+on public.shop_members for delete to authenticated
+using (public.can_manage_shop_members(shop_id));
