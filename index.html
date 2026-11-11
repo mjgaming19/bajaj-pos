@@ -761,9 +761,13 @@ async function usersPage(){
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Add an existing user to '+safeText(currentShop.name)+'</h3><span>Existing account required</span></div>'+
   '<form id="shop-member-form" class="formrow" style="align-items:end"><div class="field"><label>Supabase Auth user UUID</label><input name="user_id" required placeholder="Paste the user UUID"></div><div class="field"><label>Shop role</label><select name="role"><option value="sub_admin">Sub-admin — Shop manager</option><option value="pos_user">POS user — Cashier</option></select></div><button class="primary" type="submit">＋ Assign user</button></form>'+
   '<div id="member-form-message" class="muted" style="margin-top:8px">First create the person’s login in Supabase Authentication → Users. Then paste their user UUID here. Never share passwords or secret keys.</div></div>'+
+  '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Invite a new user</h3><span>Secure email invitation</span></div>'+
+  '<form id="shop-invite-form" class="formrow" style="align-items:end"><div class="field"><label>Email address</label><input name="email" type="email" required placeholder="person@example.com"></div><div class="field"><label>Shop role</label><select name="role">'+(isPlatformAdmin?'<option value="sub_admin">Sub-admin — Shop manager</option>':'')+'<option value="pos_user">POS user — Cashier</option></select></div><button class="primary" type="submit">Send invitation</button></form>'+
+  '<div id="invite-form-message" class="muted" style="margin-top:8px">An invitation email will be sent. The new user will receive access to this shop after accepting.</div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Users assigned to this shop</h3><button class="secondary" onclick="loadShopMembers()">↻ Refresh</button></div><div id="shop-member-list">Loading shop users…</div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Audit history</h3><button class="secondary" onclick="loadShopAuditLog()">↻ Refresh</button></div><div id="shop-audit-list">Loading audit history…</div></div>';
   $('#shop-member-form').addEventListener('submit',assignShopMember);
+  $('#shop-invite-form').addEventListener('submit',inviteShopUser);
   await loadShopMembers();
   await loadShopAuditLog();
 }
@@ -785,6 +789,20 @@ async function loadShopAuditLog(){
   rows.map(x=>'<tr><td>'+safeText(x.created_at?new Date(x.created_at).toLocaleString():'—')+'</td><td>'+safeText(x.action||'Activity')+'</td><td>'+safeText(x.entity_type||'—')+'</td><td>'+safeText(x.actor_id||'—')+'</td><td>'+safeText(typeof x.details==='string'?x.details:JSON.stringify(x.details||{}))+'</td></tr>').join('')+
   '</tbody></table></div>':'<div class="empty">No audit events recorded for this shop yet.</div>';
 }
+async function inviteShopUser(event){
+  event.preventDefault();
+  const form=event.currentTarget,msg=$('#invite-form-message');
+  const values=Object.fromEntries(new FormData(form).entries());
+  const email=String(values.email||'').trim().toLowerCase();
+  const role=String(values.role||'pos_user');
+  if(!email||!['sub_admin','pos_user'].includes(role)){msg.textContent='Enter a valid email and role.';return;}
+  if(!isPlatformAdmin&&role!=='pos_user'){msg.textContent='Sub-admins can invite POS users only.';return;}
+  const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Sending…';msg.textContent='';
+  const {data,error}=await db.functions.invoke('invite-shop-user',{body:{email,role,shop_id:currentShop.id}});
+  button.disabled=false;button.textContent='Send invitation';
+  if(error||!data?.success){msg.textContent='Invitation failed: '+(data?.error||error?.message||'Unknown error');return;}
+  form.reset();msg.textContent='Invitation sent to '+email+' for '+currentShop.name+'.';await loadShopMembers();toast('Invitation sent.');
+}
 async function assignShopMember(event){
   event.preventDefault();const form=event.currentTarget,msg=$('#member-form-message');
   const values=Object.fromEntries(new FormData(form).entries()),userId=String(values.user_id||'').trim();
@@ -805,7 +823,39 @@ async function removeShopMember(id){
   const {error}=await db.from('shop_members').delete().eq('id',id).eq('shop_id',currentShop.id);
   if(error){alert('Could not remove user: '+error.message);return;}await loadShopMembers();toast('User removed from this shop.');
 }
-function settingsPage(){ $('#view').innerHTML=heading('PREFERENCES','Settings','Configure the BAJAJ workspace.')+`<div class="card"><h3>Business profile</h3><div class="formrow"><div class="field"><label>Business display name</label><input value="BAJAJ"></div><div class="field"><label>Currency</label><input value="LKR — Sri Lankan Rupee" disabled></div><div class="field"><label>Receipt prefix</label><input value="BAJ"></div><div class="field"><label>Theme</label><input value="Dark / Light" disabled></div></div><button class="primary" onclick="toast('Settings are demo-only for now.')">Save changes</button></div><div class="card" style="margin-top:15px"><h3>Hardware compatibility</h3><p class="muted">USB barcode scanner · ESC/POS thermal receipt printer · PDF receipt export · WhatsApp sharing (production integration)</p></div>`}
+async function settingsPage(){
+  $('#view').innerHTML=heading('SHOP CONFIGURATION','Business settings','Update the business details used across this shop and on customer receipts.')+
+  '<div class="card"><div class="cardhead"><h3>Business profile</h3><span>Saved to this shop</span></div><form id="business-settings-form" class="formrow" style="align-items:end">'+
+  '<div class="field"><label>Business display name</label><input name="name" required maxlength="120"></div>'+
+  '<div class="field"><label>Phone number</label><input name="business_phone" maxlength="40" placeholder="Business contact"></div>'+
+  '<div class="field"><label>Receipt prefix</label><input name="receipt_prefix" required maxlength="10" placeholder="BAJ"></div>'+
+  '<div class="field"><label>Business address</label><input name="business_address" maxlength="250" placeholder="Shop address"></div>'+
+  '<div class="field"><label>Receipt footer</label><input name="receipt_footer" maxlength="250" placeholder="Thank you for your purchase"></div>'+
+  '<div class="field"><label>Logo image URL (optional)</label><input name="logo_url" type="url" maxlength="500" placeholder="https://..."></div>'+
+  '<button class="primary" type="submit">Save business profile</button></form><div id="business-settings-message" class="muted" style="margin-top:8px">Loading saved settings…</div></div>'+
+  '<div class="card" style="margin-top:16px"><h3>Appearance</h3><p class="muted">Use the theme button in the sidebar to switch between dark and light mode.</p></div>'+
+  '<div class="card" style="margin-top:16px"><h3>Hardware compatibility</h3><p class="muted">USB barcode scanner · ESC/POS thermal receipt printer · PDF receipt export · WhatsApp sharing (production integration)</p></div>';
+  const form=$('#business-settings-form'),msg=$('#business-settings-message');
+  const {data,error}=await db.from('shops').select('id,name,business_phone,business_address,receipt_prefix,receipt_footer,logo_url').eq('id',currentShop.id).single();
+  if(error){msg.textContent='Could not load shop settings: '+error.message;return;}
+  for(const key of ['name','business_phone','business_address','receipt_prefix','receipt_footer','logo_url']) form.elements[key].value=data[key]|| (key==='receipt_prefix'?'BAJ':'');
+  msg.textContent='Settings loaded.';
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();const v=Object.fromEntries(new FormData(form).entries());
+    const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Saving…';msg.textContent='';
+    const {data:updated,error:saveError}=await db.rpc('update_shop_settings',{
+      p_shop_id:currentShop.id,p_name:v.name,p_business_phone:v.business_phone||null,
+      p_business_address:v.business_address||null,p_receipt_prefix:v.receipt_prefix,
+      p_receipt_footer:v.receipt_footer||null,p_logo_url:v.logo_url||null
+    });
+    button.disabled=false;button.textContent='Save business profile';
+    if(saveError){msg.textContent='Could not save settings: '+saveError.message;return;}
+    currentShop={...currentShop,...updated};
+    document.querySelector('.sidefoot span').textContent=currentShop.name+' · Supabase connected';
+    msg.textContent='Business profile saved successfully.';toast('Shop settings saved.');
+  });
+}
+
 initializeApp();
 </script>
 </body></html>
