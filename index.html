@@ -239,7 +239,7 @@ async function deleteLiveProduct(id) {
   if(archiveError){toast('Could not archive product: '+archiveError.message);return;}
   toast('Product archived. Its old sales and reports are preserved.');await refreshLiveInventory();
 }
-$('#product-modal-form').addEventListener('submit',async event=>{
+document.querySelector('#product-modal-form').addEventListener('submit',async event=>{
   event.preventDefault();const form=event.currentTarget,button=$('#product-modal-save');
   const v=Object.fromEntries(new FormData(form).entries());button.disabled=true;
   try{
