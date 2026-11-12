@@ -1354,6 +1354,13 @@ async function loadSubscriptionManagement(){
   }
   const plans=plansResult.data||[],shops=shopsResult.data||[],subs=subsResult.data||[];
   const planById=new Map(plans.map(p=>[p.id,p])),subByShop=new Map(subs.map(x=>[x.shop_id,x]));
+  const usageByShop=new Map(await Promise.all(shops.map(async shop=>{
+    const [products,members]=await Promise.all([
+      db.from('products').select('id',{count:'exact',head:true}).eq('shop_id',shop.id),
+      db.from('shop_members').select('id',{count:'exact',head:true}).eq('shop_id',shop.id)
+    ]);
+    return [shop.id,{products:products.count||0,users:members.count||0}];
+  })));
   const trialCount=subs.filter(x=>x.status==='trialing').length,activeCount=subs.filter(x=>x.status==='active').length;
   const riskCount=subs.filter(x=>['past_due','suspended'].includes(x.status)).length;
   $('#subscription-summary').innerHTML=[
@@ -1364,11 +1371,11 @@ async function loadSubscriptionManagement(){
     '</tbody></table></div>':'<div class="empty">No plans created.</div>';
   shopHost.innerHTML=shops.length?'<div class="tablecard"><table><thead><tr><th>Shop</th><th>Plan</th><th>Status</th><th>Trial ends</th><th>Billing cycle</th><th>Admin note</th><th>Save</th></tr></thead><tbody>'+
     shops.map(shop=>{
-      const sub=subByShop.get(shop.id),plan=sub&&planById.get(sub.plan_id);
+      const sub=subByShop.get(shop.id),plan=sub&&planById.get(sub.plan_id),usage=usageByShop.get(shop.id)||{products:0,users:0};
       if(!sub)return '<tr><td><b>'+safeText(shop.name)+'</b></td><td colspan="6"><span class="badge warn">No subscription record — refresh or check database</span></td></tr>';
-      const dateValue=sub.trial_ends_at?new Date(sub.trial_ends_at).toISOString().slice(0,16):'';
+      const dateValue=sub.trial_ends_at?(()=>{const d=new Date(sub.trial_ends_at);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16);})():'';
       return '<tr><td><b>'+safeText(shop.name)+'</b><br><small class="muted">'+safeText(shop.slug)+'</small></td>'+
-        '<td><select id="sub-plan-'+shop.id+'" class="search" style="min-width:130px">'+plans.map(p=>'<option value="'+p.id+'" '+(p.id===sub.plan_id?'selected':'')+'>'+safeText(p.name)+'</option>').join('')+'</select><small class="muted" style="display:block">'+(plan?plan.max_users+' users · '+Number(plan.max_products).toLocaleString()+' products':'Plan unavailable')+'</small></td>'+
+        '<td><select id="sub-plan-'+shop.id+'" class="search" style="min-width:130px">'+plans.map(p=>'<option value="'+p.id+'" '+(p.id===sub.plan_id?'selected':'')+'>'+safeText(p.name)+'</option>').join('')+'</select><small class="muted" style="display:block">'+(plan?usage.users+'/'+plan.max_users+' users · '+usage.products.toLocaleString()+'/'+Number(plan.max_products).toLocaleString()+' products':'Plan unavailable')+'</small></td>'+
         '<td><select id="sub-status-'+shop.id+'" class="search" style="min-width:120px">'+['trialing','active','past_due','cancelled','suspended'].map(st=>'<option value="'+st+'" '+(st===sub.status?'selected':'')+'>'+st.replace('_',' ')+'</option>').join('')+'</select></td>'+
         '<td><input id="sub-trial-'+shop.id+'" class="search" style="min-width:175px" type="datetime-local" value="'+dateValue+'"></td>'+
         '<td><select id="sub-cycle-'+shop.id+'" class="search"><option value="monthly" '+(sub.billing_cycle==='monthly'?'selected':'')+'>Monthly</option><option value="yearly" '+(sub.billing_cycle==='yearly'?'selected':'')+'>Yearly</option></select></td>'+
