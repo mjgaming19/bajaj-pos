@@ -65,6 +65,7 @@ body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:no
     <button data-page="sales"><span class="ico">↗</span>Sales History</button>
     <button data-page="customers"><span class="ico">♙</span>Customers & Credit</button>
     <button data-page="suppliers"><span class="ico">♧</span>Suppliers</button>
+    <button data-page="expenses"><span class="ico">＄</span>Expenses</button>
     <button data-page="reports"><span class="ico">▥</span>Reports</button>
   </nav></div>
   <div><div class="navlabel">SYSTEM</div><nav class="nav">
@@ -239,7 +240,7 @@ async function verifyWorkspace() {
   }
   if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
-  const permissions = {platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','notifications','pos','shifts','sales','customers']};
+  const permissions = {platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','notifications','pos','shifts','sales','customers']};
   const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
   document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
@@ -284,7 +285,7 @@ let customers=[{name:'Nimal Perera',phone:'077 123 4567',balance:3200},{name:'Ka
 const money=n=>'LKR '+Number(n).toLocaleString('en-LK');
 const $=s=>document.querySelector(s);
 function toast(t){let e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-function page(p){const permissions={platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({notifications:'Notifications',pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,notifications:notificationsPage,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
+function page(p){const permissions={platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({notifications:'Notifications',pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',expenses:'Expenses',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,notifications:notificationsPage,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,expenses:expensesPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));
 $('#menu').onclick=()=>$('#sidebar').classList.toggle('open');
 $('#theme').onclick=()=>{let d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';$('#theme').textContent=d.dataset.theme==='dark'?'☀':'☾'};
@@ -1105,6 +1106,90 @@ async function loadCashierPerformance(){
     '<p class="muted">Cashier totals include sales linked to a shift. Older sales and sales made without an open shift are not attributed to a cashier here. Net cash difference is counted cash minus expected cash across closed shifts.</p>';
 }
 
+const expenseCategories=['Rent','Salaries','Utilities','Transport','Repairs','Supplies','Marketing','Bank charges','Other'];
+let liveExpenses=[];
+async function expensesPage(){
+  const today=localDateInputValue(),monthStart=today.slice(0,8)+'01';
+  $('#view').innerHTML=heading('COST CONTROL','Shop expenses','Record operating costs and track how they affect your real net profit.')+
+    '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Record an expense</h3><span>Manager access</span></div>'+
+    '<form id="expense-form" class="formrow" style="align-items:end">'+
+    '<div class="field"><label>Category</label><select name="category" required>'+expenseCategories.map(x=>'<option value="'+safeText(x)+'">'+safeText(x)+'</option>').join('')+'</select></div>'+
+    '<div class="field"><label>Description</label><input name="description" required maxlength="180" placeholder="e.g. Monthly shop rent"></div>'+
+    '<div class="field"><label>Amount (LKR)</label><input name="amount" type="number" min="0.01" step="0.01" required placeholder="0.00"></div>'+
+    '<div class="field"><label>Expense date</label><input name="expense_date" type="date" required value="'+today+'"></div>'+
+    '<div class="field"><label>Payment method</label><select name="payment_method"><option value="cash">Cash</option><option value="card">Card</option><option value="bank">Bank transfer</option><option value="other">Other</option></select></div>'+
+    '<div class="field"><label>Reference (optional)</label><input name="reference" maxlength="100" placeholder="Receipt / invoice number"></div>'+
+    '<div class="field"><label>Notes (optional)</label><input name="notes" maxlength="500" placeholder="Additional details"></div>'+
+    '<button class="primary" type="submit">＋ Save expense</button></form><div id="expense-form-message" class="muted"></div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Expense history</h3><button class="secondary" onclick="loadExpenses()">↻ Refresh</button></div>'+
+    '<div class="toolbar"><div class="field"><label>From</label><input class="search" id="expense-from" type="date" value="'+monthStart+'"></div><div class="field"><label>To</label><input class="search" id="expense-to" type="date" value="'+today+'"></div><div class="field"><label>Category</label><select class="search" id="expense-category-filter"><option value="">All categories</option>'+expenseCategories.map(x=>'<option value="'+safeText(x)+'">'+safeText(x)+'</option>').join('')+'</select></div><button class="secondary" onclick="filterExpenses()">Apply filters</button><button class="secondary" onclick="exportExpensesCSV()">Export CSV</button></div>'+
+    '<div id="expense-list"><p class="muted">Loading expenses…</p></div></div>';
+  $('#expense-form').addEventListener('submit',addExpense);
+  await loadExpenses();
+}
+async function addExpense(event){
+  event.preventDefault();
+  const form=event.currentTarget,msg=$('#expense-form-message'),v=Object.fromEntries(new FormData(form).entries());
+  const amount=Number(v.amount),description=String(v.description||'').trim();
+  if(!description||!Number.isFinite(amount)||amount<=0){msg.textContent='Enter a description and a valid amount greater than zero.';return;}
+  const button=form.querySelector('button[type="submit"]');button.disabled=true;button.textContent='Saving…';msg.textContent='';
+  const {error}=await db.from('expenses').insert({
+    shop_id:currentShop.id,category:v.category,description,amount,expense_date:v.expense_date,
+    payment_method:v.payment_method,reference:String(v.reference||'').trim()||null,
+    notes:String(v.notes||'').trim()||null,created_by:currentUser.id
+  });
+  button.disabled=false;button.textContent='＋ Save expense';
+  if(error){msg.textContent='Could not save expense: '+error.message;return;}
+  form.reset();form.elements.expense_date.value=localDateInputValue();msg.textContent='Expense saved and included in reports.';
+  toast('Expense recorded.');await loadExpenses();
+}
+async function loadExpenses(){
+  const host=$('#expense-list');if(host)host.innerHTML='<p class="muted">Loading expenses…</p>';
+  const {data,error}=await db.from('expenses').select('*').eq('shop_id',currentShop.id).order('expense_date',{ascending:false}).order('created_at',{ascending:false});
+  if(error){if(host)host.innerHTML='<div class="notice">Could not load expenses: '+safeText(error.message)+'</div>';return;}
+  liveExpenses=data||[];filterExpenses();
+}
+function filterExpenses(){
+  const host=$('#expense-list');if(!host)return;
+  const from=$('#expense-from')?.value||'',to=$('#expense-to')?.value||'',category=$('#expense-category-filter')?.value||'';
+  if(from&&to&&from>to){host.innerHTML='<div class="notice">Choose a valid date range.</div>';return;}
+  const rows=liveExpenses.filter(x=>(!from||x.expense_date>=from)&&(!to||x.expense_date<=to)&&(!category||x.category===category));
+  const total=rows.reduce((n,x)=>n+Number(x.amount||0),0);
+  const byCategory=new Map();rows.forEach(x=>byCategory.set(x.category,(byCategory.get(x.category)||0)+Number(x.amount||0)));
+  host.innerHTML='<div class="stats"><div class="stat"><div class="stathead">Total expenses</div><strong>'+money(total)+'</strong><small>'+rows.length+' records in selected range</small></div><div class="stat"><div class="stathead">Average expense</div><strong>'+money(rows.length?total/rows.length:0)+'</strong><small>Per recorded expense</small></div><div class="stat"><div class="stathead">Categories used</div><strong>'+byCategory.size+'</strong><small>Expense categories</small></div></div>'+
+    (rows.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Payment</th><th>Reference</th><th>Amount</th><th>Actions</th></tr></thead><tbody>'+
+    rows.map(x=>'<tr><td>'+safeText(x.expense_date)+'</td><td><span class="badge">'+safeText(x.category)+'</span></td><td><b>'+safeText(x.description)+'</b><div class="muted">'+safeText(x.notes||'')+'</div></td><td>'+safeText(x.payment_method)+'</td><td>'+safeText(x.reference||'—')+'</td><td><b>'+money(x.amount)+'</b></td><td><button class="secondary" onclick="editExpense(\\''+safeText(x.id)+'\\')">Edit</button> <button class="danger" onclick="deleteExpense(\\''+safeText(x.id)+'\\')">Delete</button></td></tr>').join('')+
+    '</tbody></table></div>':'<div class="empty">No expenses match this date range.</div>')+
+    (byCategory.size?'<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Spending by category</h3></div>'+[...byCategory.entries()].sort((a,b)=>b[1]-a[1]).map(([name,value])=>'<div class="cartline"><span>'+safeText(name)+'</span><b>'+money(value)+'</b></div>').join('')+'</div>':'');
+}
+async function editExpense(id){
+  const x=liveExpenses.find(v=>String(v.id)===String(id));if(!x)return;
+  const category=prompt('Category ('+expenseCategories.join(', ')+'):',x.category);if(category===null)return;
+  const description=prompt('Description:',x.description);if(description===null)return;
+  const amount=prompt('Amount (LKR):',x.amount);if(amount===null)return;
+  const expense_date=prompt('Expense date (YYYY-MM-DD):',x.expense_date);if(expense_date===null)return;
+  const payment_method=prompt('Payment method (cash, card, bank, other):',x.payment_method);if(payment_method===null)return;
+  const notes=prompt('Notes:',x.notes||'');if(notes===null)return;
+  const value=Number(amount),cat=category.trim(),desc=description.trim();
+  if(!expenseCategories.includes(cat)||!desc||!Number.isFinite(value)||value<=0||!/^\\d{4}-\\d{2}-\\d{2}$/.test(expense_date)||!['cash','card','bank','other'].includes(payment_method.trim())){alert('Enter valid category, description, amount, date and payment method.');return;}
+  const {error}=await db.from('expenses').update({category:cat,description:desc,amount:value,expense_date,payment_method:payment_method.trim(),notes:notes.trim()||null}).eq('id',id).eq('shop_id',currentShop.id);
+  if(error){alert('Could not update expense: '+error.message);return;}
+  toast('Expense updated.');await loadExpenses();
+}
+async function deleteExpense(id){
+  if(!confirm('Delete this expense record? It will be removed from net-profit calculations.'))return;
+  const {error}=await db.from('expenses').delete().eq('id',id).eq('shop_id',currentShop.id);
+  if(error){alert('Could not delete expense: '+error.message);return;}
+  toast('Expense deleted.');await loadExpenses();
+}
+function exportExpensesCSV(){
+  const from=$('#expense-from')?.value||'',to=$('#expense-to')?.value||'',category=$('#expense-category-filter')?.value||'';
+  const rows=liveExpenses.filter(x=>(!from||x.expense_date>=from)&&(!to||x.expense_date<=to)&&(!category||x.category===category));
+  downloadCSV('bajaj-expenses-'+(from||'all')+'-to-'+(to||'all')+'.csv',[
+    ['Date','Category','Description','Amount LKR','Payment method','Reference','Notes'],
+    ...rows.map(x=>[x.expense_date,x.category,x.description,x.amount,x.payment_method,x.reference||'',x.notes||''])
+  ]);
+}
 async function reportsPage(){
   const today=localDateInputValue();
   const monthStart=today.slice(0,8)+'01';
