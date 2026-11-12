@@ -1,32 +1,48 @@
-# BAJAJ Spare Parts POS — Demo 01
+# BAJAJ Spare Parts POS
 
-A responsive, standalone front-end prototype for a Bajaj-only spare-parts shop management system.
+A responsive, browser-based multi-shop POS and management system for Bajaj spare-parts businesses. The front end is a static HTML application and uses Supabase for authentication, PostgreSQL data, row-level security, and Edge Functions.
+
+## Main modules
+
+- Secure sign-in with Main Admin, Sub-admin, and POS User roles
+- Multi-shop management with shop-specific data access
+- Live point of sale, barcode/product-code lookup, cart, discounts, and receipts
+- Inventory management, stock adjustments, low-stock thresholds, and CSV import/export
+- Sales history, credit-sale approval, repayments, returns, refunds, and exchanges
+- Cashier shifts, opening/closing cash, and cash reconciliation
+- Customer profiles, purchase history, credit balances, and loyalty points
+- Supplier directory and purchase orders with stock receiving
+- Sales analytics, product profitability, cashier performance, and CSV exports
+- In-app notifications for low stock, pending credit approvals, and overdue credit balances
+- Shop business settings, receipt details, and activity/audit history
+- Light and dark themes with responsive desktop and mobile layouts
+
+## Technology
+
+- HTML, CSS, and vanilla JavaScript
+- Supabase Auth
+- Supabase PostgreSQL with Row Level Security
+- Supabase Edge Functions
+- GitHub Pages (or another static hosting provider)
 
 ## Run locally
 
-Open `index.html` in a modern browser. No build step is required.
+Open `index.html` in a modern browser. The app connects to the configured Supabase project, so a valid user account and shop membership are required to sign in.
 
-## Demo modules
+## Deployment
 
-- Dashboard with illustrative sales and stock figures
-- Point of Sale with sample products and cart
-- Inventory search and sample product entry
-- Sales history
-- Customer credit balances and sample repayments
-- Supplier placeholder
-- Reports with illustrative figures
-- Main Admin / Sub-admin / POS user role concept
-- Dark and light themes
+1. Publish the repository as a static site (for example, with GitHub Pages).
+2. Configure the Supabase project URL and publishable key in `index.html`.
+3. Apply the SQL migrations in `supabase/migrations` to the matching Supabase project.
+4. Deploy the `invite-shop-user` Edge Function and configure its required server-side secrets in Supabase.
+5. Create the Main Admin account, add it to `platform_admins`, and create the first shop.
+6. Invite or assign Sub-admin and POS User accounts from User Management.
 
-## Important demo limitations
+Never put a Supabase secret/service-role key in browser code. The publishable key is intended for client-side use with RLS correctly enabled.
 
-This is a front-end demonstration only. It does not connect to Supabase, provide real authentication or role enforcement, synchronize devices, store transactions persistently, process payments, or integrate with a physical printer/scanner. All figures and transactions are sample data. Do not use it for live shop operations.
+## Important operational notes
 
-## Planned production architecture
-
-- Supabase Auth and PostgreSQL
-- Tenant isolation per shop, enforced with Row Level Security
-- Platform Owner, Sub-admin, and POS User permissions
-- Audit logs for sensitive actions
-- Offline-safe sales queue with duplicate-safe synchronization
-- ESC/POS thermal printer and USB barcode scanner compatibility
+- This is an online-first application. Offline sales queuing and automatic background synchronization are not implemented.
+- In-app alerts are available; SMS, WhatsApp, and email reminder delivery are not configured.
+- Receipts can be rendered/printed by the browser. Direct ESC/POS printer integration and hardware-specific scanner integrations are not included.
+- Use a separate Supabase project for development and production, and take database backups before production schema changes.
