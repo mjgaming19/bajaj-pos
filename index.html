@@ -916,18 +916,27 @@ async function loadCashierPerformance(){
   if(!host||!date)return;
   host.innerHTML='<p class="muted">Calculating cashier totals…</p>';
   const start=new Date(date+'T00:00:00').toISOString(),end=new Date(new Date(date+'T00:00:00').getTime()+86400000).toISOString();
-  const [shiftResult,salesResult]=await Promise.all([
+  const [shiftResult,salesResult,returnsResult]=await Promise.all([
     db.from('cashier_shifts').select('*').eq('shop_id',currentShop.id).gte('opened_at',start).lt('opened_at',end).order('opened_at',{ascending:false}),
-    db.from('sales').select('id,shift_id,total,status,payment_method,sold_at').eq('shop_id',currentShop.id).gte('sold_at',start).lt('sold_at',end)
+    db.from('sales').select('id,shift_id,total,status,payment_method,sold_at,cashier_id').eq('shop_id',currentShop.id).gte('sold_at',start).lt('sold_at',end),
+    db.from('sale_returns').select('refund_amount,refund_method,sales!inner(shift_id,cashier_id,shop_id)').eq('sales.shop_id',currentShop.id).gte('created_at',start).lt('created_at',end)
   ]);
   if(shiftResult.error){host.innerHTML='<div class="notice">Could not load cashier shifts: '+safeText(shiftResult.error.message)+'</div>';return;}
-  if(salesResult.error){host.innerHTML='<div class="notice">Could not load cashier sales: '+safeText(salesResult.error.message)+'</div>';return;}
-  const shifts=shiftResult.data||[],sales=salesResult.data||[];
+  if(salesResult.error||returnsResult.error){host.innerHTML='<div class="notice">Could not load cashier sales and returns: '+safeText(salesResult.error?.message||returnsResult.error?.message)+'</div>';return;}
+  const shifts=shiftResult.data||[],sales=salesResult.data||[],returns=returnsResult.data||[];
   const completed=sales.filter(x=>x.status==='completed');
   const total=rows=>rows.reduce((n,x)=>n+Number(x.total||0),0);
+  const refundTotal=rows=>rows.reduce((n,x)=>n+Number(x.refund_amount||0),0);
   const cash=completed.filter(x=>x.payment_method==='cash');
   const card=completed.filter(x=>x.payment_method==='card');
   const credit=completed.filter(x=>x.payment_method==='credit');
+  const cashRefunds=returns.filter(x=>x.refund_method==='cash');
+  const cardRefunds=returns.filter(x=>x.refund_method==='card');
+  const creditAdjustments=returns.filter(x=>x.refund_method==='credit_adjustment');
+  const netTotal=total(completed)-refundTotal(returns);
+  const netCash=total(cash)-refundTotal(cashRefunds);
+  const netCard=total(card)-refundTotal(cardRefunds);
+  const netCredit=total(credit)-refundTotal(creditAdjustments);
   const closed=shifts.filter(x=>x.status==='closed');
   const open=shifts.filter(x=>x.status==='open');
   const difference=closed.reduce((n,x)=>n+Number(x.cash_difference||0),0);
@@ -936,14 +945,15 @@ async function loadCashierPerformance(){
     const own=shifts.filter(x=>x.cashier_id===id),ids=own.map(x=>x.id);
     const ownSales=completed.filter(x=>ids.includes(x.shift_id));
     const ownCash=ownSales.filter(x=>x.payment_method==='cash');
-    return {id,shifts:own.length,sales:ownSales.length,total:total(ownSales),cash:total(ownCash),difference:own.filter(x=>x.status==='closed').reduce((n,x)=>n+Number(x.cash_difference||0),0)};
+    const ownReturns=returns.filter(r=>r.sales?.cashier_id===id);
+    return {id,shifts:own.length,sales:ownSales.length,total:total(ownSales)-refundTotal(ownReturns),cash:total(ownCash)-refundTotal(ownReturns.filter(r=>r.refund_method==='cash')),difference:own.filter(x=>x.status==='closed').reduce((n,x)=>n+Number(x.cash_difference||0),0)};
   }).sort((a,b)=>b.total-a.total);
   host.innerHTML='<div class="stats">'+
-    '<div class="stat"><div class="stathead">Completed sales</div><strong>'+money(total(completed))+'</strong><small class="muted">'+completed.length+' transactions</small></div>'+
-    '<div class="stat"><div class="stathead">Cash sales</div><strong>'+money(total(cash))+'</strong><small class="muted">'+cash.length+' transactions</small></div>'+
-    '<div class="stat"><div class="stathead">Card / credit sales</div><strong>'+money(total(card)+total(credit))+'</strong><small class="muted">'+(card.length+credit.length)+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Completed sales</div><strong>'+money(netTotal)+'</strong><small class="muted">'+completed.length+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Cash sales</div><strong>'+money(netCash)+'</strong><small class="muted">'+cash.length+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Card / credit sales</div><strong>'+money(netCard+netCredit)+'</strong><small class="muted">'+(card.length+credit.length)+' transactions</small></div>'+
     '<div class="stat"><div class="stathead">Cash difference</div><strong>'+money(difference)+'</strong><small class="muted">'+closed.length+' closed · '+open.length+' open shifts</small></div></div>'+
-    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment summary</h3></div><div class="cartline"><span>Cash</span><b>'+money(total(cash))+'</b></div><div class="cartline"><span>Card</span><b>'+money(total(card))+'</b></div><div class="cartline"><span>Credit</span><b>'+money(total(credit))+'</b></div><div class="cartline"><span>Pending credit approvals</span><b>'+sales.filter(x=>x.status==='pending_approval').length+'</b></div></div>'+
+    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment summary</h3></div><div class="cartline"><span>Cash</span><b>'+money(total(cash))+'</b></div><div class="cartline"><span>Card</span><b>'+money(netCard)+'</b></div><div class="cartline"><span>Credit</span><b>'+money(netCredit)+'</b></div><div class="cartline"><span>Pending credit approvals</span><b>'+sales.filter(x=>x.status==='pending_approval').length+'</b></div></div>'+
     '<div class="card"><div class="cardhead"><h3>Shift reconciliation</h3></div><div class="cartline"><span>Shifts opened</span><b>'+shifts.length+'</b></div><div class="cartline"><span>Closed shifts</span><b>'+closed.length+'</b></div><div class="cartline"><span>Still open</span><b>'+open.length+'</b></div><div class="cartline"><span>Net shortage / excess</span><b>'+money(difference)+'</b></div></div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Cashier performance</h3><span>'+byCashier.length+' cashiers</span></div>'+
     (byCashier.length?'<div class="tablecard"><table><thead><tr><th>Cashier ID</th><th>Shifts</th><th>Transactions</th><th>Sales value</th><th>Cash sales</th><th>Net difference</th></tr></thead><tbody>'+byCashier.map(x=>'<tr><td><code>'+safeText(x.id.slice(0,8))+'…</code></td><td>'+x.shifts+'</td><td>'+x.sales+'</td><td><b>'+money(x.total)+'</b></td><td>'+money(x.cash)+'</td><td>'+money(x.difference)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No cashier shifts were opened on this date.</div>')+'</div>'+
