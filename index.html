@@ -512,6 +512,7 @@ async function checkout() {
   renderReceipt();
   cart=[];await refreshPOSProducts();renderCart();await loadPOSCustomers();
   if($('#pos-discount'))$('#pos-discount').value='0';
+  if($('#redeem-points'))$('#redeem-points').value='0';
   if($('#cash-tendered'))$('#cash-tendered').value='';
   renderCart();
 }
@@ -760,8 +761,8 @@ function filterLiveCustomers(){
     target.innerHTML = '<div class="empty">'+(liveCustomers.length ? 'No customers match your search.' : 'No customers registered yet. Add your first customer above.')+'</div>';
     return;
   }
-  target.innerHTML = '<div class="tablecard"><table><thead><tr><th>Customer</th><th>Phone</th><th>Address</th><th>Added</th><th>Actions</th></tr></thead><tbody>'+
-    rows.map(c => '<tr><td><b>'+safeText(c.name)+'</b></td><td>'+safeText(c.phone||'—')+'</td><td>'+safeText(c.address||'—')+'</td><td class="muted">'+(c.created_at ? new Date(c.created_at).toLocaleDateString() : '—')+'</td><td><button class="secondary" onclick="editLiveCustomer(\''+safeText(c.id)+'\')">Edit</button></td></tr>').join('')+
+  target.innerHTML = '<div class="tablecard"><table><thead><tr><th>Customer</th><th>Phone / email</th><th>Purchases</th><th>Net spend</th><th>Tier</th><th>Points</th><th>Actions</th></tr></thead><tbody>'+
+    rows.map(c => {const st=customerStats[c.id]||{purchases:0,spend:0,points:0};return '<tr><td><b>'+safeText(c.name)+'</b><div class="muted">'+safeText(c.address||'')+'</div></td><td>'+safeText(c.phone||'—')+'<div class="muted">'+safeText(c.email||'')+'</div></td><td>'+st.purchases+'</td><td><b>'+money(st.spend)+'</b></td><td><span class="badge">'+customerTier(st.spend)+'</span></td><td><b>'+Math.max(0,st.points)+'</b></td><td><button class="secondary" onclick="viewCustomerDetails(\\''+safeText(c.id)+'\\')">History</button> <button class="secondary" onclick="editLiveCustomer(\\''+safeText(c.id)+'\\')">Edit</button></td></tr>';}).join('')+
     '</tbody></table></div>';
 }
 
