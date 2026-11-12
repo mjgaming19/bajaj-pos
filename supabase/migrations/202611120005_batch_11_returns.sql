@@ -912,3 +912,10 @@ $function$
 ;
 revoke all on function public.process_sale_exchange(uuid,jsonb,jsonb,text,text) from public,anon;
 grant execute on function public.process_sale_exchange(uuid,jsonb,jsonb,text,text) to authenticated;
+
+
+-- Cover the return ledger foreign keys with indexes.
+create index if not exists sale_returns_created_by_idx on public.sale_returns(created_by);
+create index if not exists sale_returns_replacement_sale_idx on public.sale_returns(replacement_sale_id);
+create index if not exists sale_return_items_return_idx on public.sale_return_items(return_id);
+create index if not exists sale_return_items_product_idx on public.sale_return_items(product_id);
