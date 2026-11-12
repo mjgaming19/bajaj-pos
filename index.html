@@ -819,6 +819,51 @@ async function closeCashierShift(event){
   toast('Shift closed. Difference: '+money(result?.cash_difference||0));await loadShiftWorkspace();
 }
 
+function localDateInputValue(date=new Date()){
+  const offset=date.getTimezoneOffset()*60000;
+  return new Date(date.getTime()-offset).toISOString().slice(0,10);
+}
+async function loadCashierPerformance(){
+  const host=$('#cashier-performance-content'),date=$('#cashier-report-date')?.value;
+  if(!host||!date)return;
+  host.innerHTML='<p class="muted">Calculating cashier totals…</p>';
+  const start=new Date(date+'T00:00:00').toISOString(),end=new Date(new Date(date+'T00:00:00').getTime()+86400000).toISOString();
+  const [shiftResult,salesResult]=await Promise.all([
+    db.from('cashier_shifts').select('*').eq('shop_id',currentShop.id).gte('opened_at',start).lt('opened_at',end).order('opened_at',{ascending:false}),
+    db.from('sales').select('id,shift_id,total,status,payment_method,sold_at').eq('shop_id',currentShop.id).gte('sold_at',start).lt('sold_at',end)
+  ]);
+  if(shiftResult.error){host.innerHTML='<div class="notice">Could not load cashier shifts: '+safeText(shiftResult.error.message)+'</div>';return;}
+  if(salesResult.error){host.innerHTML='<div class="notice">Could not load cashier sales: '+safeText(salesResult.error.message)+'</div>';return;}
+  const shifts=shiftResult.data||[],sales=salesResult.data||[];
+  const completed=sales.filter(x=>x.status==='completed');
+  const total=rows=>rows.reduce((n,x)=>n+Number(x.total||0),0);
+  const cash=completed.filter(x=>x.payment_method==='cash');
+  const card=completed.filter(x=>x.payment_method==='card');
+  const credit=completed.filter(x=>x.payment_method==='credit');
+  const closed=shifts.filter(x=>x.status==='closed');
+  const open=shifts.filter(x=>x.status==='open');
+  const difference=closed.reduce((n,x)=>n+Number(x.cash_difference||0),0);
+  const cashierIds=[...new Set(shifts.map(x=>x.cashier_id))];
+  const byCashier=cashierIds.map(id=>{
+    const own=shifts.filter(x=>x.cashier_id===id),ids=own.map(x=>x.id);
+    const ownSales=completed.filter(x=>ids.includes(x.shift_id));
+    const ownCash=ownSales.filter(x=>x.payment_method==='cash');
+    return {id,shifts:own.length,sales:ownSales.length,total:total(ownSales),cash:total(ownCash),difference:own.filter(x=>x.status==='closed').reduce((n,x)=>n+Number(x.cash_difference||0),0)};
+  }).sort((a,b)=>b.total-a.total);
+  host.innerHTML='<div class="stats">'+
+    '<div class="stat"><div class="stathead">Completed sales</div><strong>'+money(total(completed))+'</strong><small class="muted">'+completed.length+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Cash sales</div><strong>'+money(total(cash))+'</strong><small class="muted">'+cash.length+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Card / credit sales</div><strong>'+money(total(card)+total(credit))+'</strong><small class="muted">'+(card.length+credit.length)+' transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Cash difference</div><strong>'+money(difference)+'</strong><small class="muted">'+closed.length+' closed · '+open.length+' open shifts</small></div></div>'+
+    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment summary</h3></div><div class="cartline"><span>Cash</span><b>'+money(total(cash))+'</b></div><div class="cartline"><span>Card</span><b>'+money(total(card))+'</b></div><div class="cartline"><span>Credit</span><b>'+money(total(credit))+'</b></div><div class="cartline"><span>Pending credit approvals</span><b>'+sales.filter(x=>x.status==='pending_approval').length+'</b></div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Shift reconciliation</h3></div><div class="cartline"><span>Shifts opened</span><b>'+shifts.length+'</b></div><div class="cartline"><span>Closed shifts</span><b>'+closed.length+'</b></div><div class="cartline"><span>Still open</span><b>'+open.length+'</b></div><div class="cartline"><span>Net shortage / excess</span><b>'+money(difference)+'</b></div></div></div>'+
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Cashier performance</h3><span>'+byCashier.length+' cashiers</span></div>'+
+    (byCashier.length?'<div class="tablecard"><table><thead><tr><th>Cashier ID</th><th>Shifts</th><th>Transactions</th><th>Sales value</th><th>Cash sales</th><th>Net difference</th></tr></thead><tbody>'+byCashier.map(x=>'<tr><td><code>'+safeText(x.id.slice(0,8))+'…</code></td><td>'+x.shifts+'</td><td>'+x.sales+'</td><td><b>'+money(x.total)+'</b></td><td>'+money(x.cash)+'</td><td>'+money(x.difference)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No cashier shifts were opened on this date.</div>')+'</div>'+
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Shift-by-shift reconciliation</h3></div>'+
+    (shifts.length?'<div class="tablecard"><table><thead><tr><th>Cashier</th><th>Opened</th><th>Closed</th><th>Opening cash</th><th>Expected</th><th>Counted</th><th>Difference</th><th>Status</th></tr></thead><tbody>'+shifts.map(x=>'<tr><td><code>'+safeText(x.cashier_id.slice(0,8))+'…</code></td><td>'+safeText(new Date(x.opened_at).toLocaleTimeString())+'</td><td>'+safeText(x.closed_at?new Date(x.closed_at).toLocaleTimeString():'—')+'</td><td>'+money(x.opening_cash)+'</td><td>'+money(x.expected_cash??0)+'</td><td>'+money(x.closing_cash??0)+'</td><td>'+ (x.cash_difference===null?'—':money(x.cash_difference))+'</td><td><span class="badge '+(x.status==='open'?'warn':'')+'">'+safeText(x.status)+'</span></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No shifts for this date.</div>')+'</div>'+
+    '<p class="muted">Cashier totals include sales linked to a shift. Older sales and sales made without an open shift are not attributed to a cashier here. Net cash difference is counted cash minus expected cash across closed shifts.</p>';
+}
+
 async function reportsPage(){
   $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Figures are calculated from BAJAJ transactions and current inventory.')+
   '<div class="notice">Sales value includes completed sales (including approved credit sales). Pending credit requests are excluded. Profit is not shown until cost-at-sale is recorded reliably.</div>'+
@@ -848,7 +893,9 @@ async function reportsPage(){
     '<table><thead><tr><th>Method</th><th>Transactions</th><th>Sales value</th></tr></thead><tbody>'+methods.map(m=>'<tr><td>'+safeText(m.method.toUpperCase())+'</td><td>'+m.count+'</td><td>'+money(m.value)+'</td></tr>').join('')+'</tbody></table></div>'+
     '<div class="card"><div class="cardhead"><h3>Credit & approvals</h3></div><div class="cartline"><span>Credit sales awaiting approval</span><b>'+pending.length+'</b></div><div class="cartline"><span>Approved credit sales not marked paid</span><b>'+credit.length+'</b></div><p class="muted">These are sale counts, not remaining balances.</p></div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Low-stock watchlist</h3><span>'+low.length+' products</span></div>'+
-    (low.length?'<div class="tablecard"><table><thead><tr><th>Product</th><th>Code</th><th>In stock</th><th>Alert at</th></tr></thead><tbody>'+low.map(p=>'<tr><td><b>'+safeText(p.product_name)+'</b></td><td>'+safeText(p.product_code)+'</td><td><span class="badge warn">'+Number(p.quantity||0)+'</span></td><td>'+Number(p.low_stock_threshold??5)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No products are currently below their alert threshold.</div>')+'</div>';
+    (low.length?'<div class="tablecard"><table><thead><tr><th>Product</th><th>Code</th><th>In stock</th><th>Alert at</th></tr></thead><tbody>'+low.map(p=>'<tr><td><b>'+safeText(p.product_name)+'</b></td><td>'+safeText(p.product_code)+'</td><td><span class="badge warn">'+Number(p.quantity||0)+'</span></td><td>'+Number(p.low_stock_threshold??5)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No products are currently below their alert threshold.</div>')+'</div>'+
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Daily cashier & cash summary</h3><input id="cashier-report-date" type="date" value="'+localDateInputValue()+'" onchange="loadCashierPerformance()"></div><div id="cashier-performance-content"><p class="muted">Loading cashier report…</p></div></div>';
+  await loadCashierPerformance();
 }
 
 async function shopsPage(){
