@@ -532,6 +532,7 @@ async function salesPage(){
   '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Pending credit approvals</h3><span id="pending-count">Loading…</span></div><div id="pending-credit-list" class="muted">Loading pending credit sales…</div></div>'+
   '<div class="card"><div class="cardhead"><h3>All transactions</h3><span id="sales-count">Loading…</span></div><div id="live-sales-table" class="tablecard">Loading sales…</div></div>'+
   ((isPlatformAdmin||currentUserRole==='sub_admin')?'<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Process a product return</h3><span>Manager approval</span></div><div class="formrow"><div class="field"><label>Original sale</label><select id="return-sale" onchange="loadReturnableItems()"><option value="">Select a completed sale</option></select></div><div class="field"><label>Refund method</label><select id="return-method"><option value="cash">Cash refund</option><option value="card">Card refund</option><option value="credit_adjustment">Reduce outstanding credit</option></select></div></div><div id="return-items-list" class="muted" style="margin:12px 0">Select a sale to view returnable items.</div><div class="field"><label>Reason for return</label><input id="return-reason" maxlength="300" placeholder="e.g. Wrong part supplied"></div><button class="primary" style="margin-top:12px" onclick="submitSaleReturn()">Process return</button><div id="return-message" class="muted" style="margin-top:8px"></div><p class="muted">Cash/card refunds must already have been issued before confirming. Unopened or resellable items can be added back to stock; uncheck Restock for damaged items.</p></div>':'')+
+  ((isPlatformAdmin||currentUserRole==='sub_admin')?'<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Exchange for another product</h3><span>One replacement part per exchange</span></div><div class="formrow"><div class="field"><label>Replacement product</label><select id="exchange-product"><option value="">Select replacement product</option></select></div><div class="field"><label>Quantity</label><input id="exchange-qty" type="number" min="1" step="1" value="1"></div><div class="field"><label>How customer pays the difference</label><select id="exchange-method"><option value="cash">Cash</option><option value="card">Card</option></select></div></div><button class="primary" style="margin-top:12px" onclick="submitSaleExchange()">Complete exchange</button><div id="exchange-message" class="muted" style="margin-top:8px"></div><p class="muted">Choose the original sale above and enter the returned quantities in the return table. The replacement value must be equal to or greater than the returned value; any difference is collected by cash or card.</p></div>':'')+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Return history</h3><button class="secondary" onclick="loadReturnHistory()">↻ Refresh</button></div><div id="return-history-list" class="tablecard">Loading returns…</div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Record a credit repayment</h3></div><div class="formrow"><div class="field"><label>Credit sale</label><select id="repayment-sale"><option value="">Select an outstanding credit sale</option></select></div><div class="field"><label>Amount (LKR)</label><input id="repayment-amount" type="number" min="0.01" step="0.01" placeholder="Amount received"></div><div class="field"><label>Payment method</label><select id="repayment-method"><option value="cash">Cash</option><option value="card">Card</option></select></div><button class="primary" onclick="submitRepayment()">Record repayment</button></div><div id="repayment-message" class="muted"></div></div>';
   await loadLiveSales();
@@ -616,10 +617,13 @@ async function loadReturnableItems(){
   const methodSelect=$('#return-method');
   if(methodSelect&&selectedSale)methodSelect.innerHTML=selectedSale.payment_method==='credit'?'<option value="credit_adjustment">Reduce outstanding credit</option>':selectedSale.payment_method==='card'?'<option value="card">Card refund</option>':'<option value="cash">Cash refund</option>';
   host.textContent='Loading sale items…';
-  const [{data:items,error:itemsError},{data:prior,error:priorError}]=await Promise.all([
+  const [{data:items,error:itemsError},{data:prior,error:priorError},products]=await Promise.all([
     db.from('sale_items').select('id,product_name,product_code,quantity,unit_price,line_total').eq('sale_id',saleId),
-    db.from('sale_return_items').select('sale_item_id,quantity')
+    db.from('sale_return_items').select('sale_item_id,quantity'),
+    loadLiveInventory()
   ]);
+  const replacementSelect=$('#exchange-product');
+  if(replacementSelect)replacementSelect.innerHTML='<option value="">Select replacement product</option>'+(products||[]).filter(p=>Number(p.quantity||0)>0).map(p=>'<option value="'+safeText(p.id)+'">'+safeText(p.product_name)+' · '+safeText(p.product_code||'')+' · '+money(Number(p.selling_price||0))+' · Stock '+Number(p.quantity||0)+'</option>').join('');
   if(itemsError||priorError){host.innerHTML='<div class="notice">Could not load returnable items: '+safeText(itemsError?.message||priorError?.message)+'</div>';return;}
   const returned=new Map();
   for(const row of prior||[])returned.set(row.sale_item_id,(returned.get(row.sale_item_id)||0)+Number(row.quantity||0));
@@ -654,6 +658,34 @@ async function submitSaleReturn(){
   await loadLiveSales();await loadReturnableItems();await refreshPOSProducts();await refreshLiveInventory();
   toast('Product return processed.');
 }
+async function submitSaleExchange(){
+  const saleId=$('#return-sale')?.value,reason=String($('#return-reason')?.value||'').trim();
+  const productId=$('#exchange-product')?.value,quantity=Number($('#exchange-qty')?.value||0);
+  const method=$('#exchange-method')?.value,message=$('#exchange-message');
+  if(!saleId){message.textContent='Select the original sale first.';return;}
+  if(!reason){message.textContent='Enter a reason for the exchange.';return;}
+  if(!productId||!Number.isInteger(quantity)||quantity<=0){message.textContent='Select a replacement product and a valid quantity.';return;}
+  const returnItems=[...document.querySelectorAll('.return-qty')].map(input=>({
+    sale_item_id:input.dataset.saleItemId,quantity:Number(input.value||0),
+    restock:!!document.querySelector('.return-restock[data-sale-item-id="'+input.dataset.saleItemId+'"]')?.checked
+  })).filter(item=>item.quantity>0);
+  if(!returnItems.length){message.textContent='Enter the quantity being returned in the table above.';return;}
+  if(!confirm('Complete this exchange? The original items will be returned and the replacement product will be deducted from stock. Any difference must be collected now.'))return;
+  const button=document.querySelector('button[onclick="submitSaleExchange()"]');
+  if(button){button.disabled=true;button.textContent='Completing…';}
+  const {data,error}=await db.rpc('process_sale_exchange',{
+    p_sale_id:saleId,p_return_items:returnItems,
+    p_replacement_items:[{product_id:productId,quantity}],
+    p_reason:reason,p_payment_method:method
+  });
+  if(button){button.disabled=false;button.textContent='Complete exchange';}
+  if(error){message.textContent='Exchange was not completed: '+error.message;return;}
+  message.textContent='Exchange '+(data?.return_no||'')+' completed. Replacement receipt: '+(data?.receipt_no||'')+'. Credit applied: '+money(Number(data?.exchange_credit||0))+'. Amount collected: '+money(Number(data?.amount_paid||0))+'.';
+  $('#return-reason').value='';$('#exchange-qty').value='1';
+  await loadLiveSales();await loadReturnableItems();await refreshPOSProducts();await refreshLiveInventory();
+  toast('Product exchange completed.');
+}
+
 async function loadReturnHistory(){
   const host=$('#return-history-list');if(!host)return;
   const {data,error}=await db.from('sale_returns').select('id,sale_id,return_no,refund_method,refund_amount,reason,created_at').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
