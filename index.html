@@ -59,6 +59,7 @@ body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:no
   <div><div class="navlabel">WORKSPACE</div><nav class="nav">
     <button class="active" data-page="dashboard"><span class="ico">▦</span>Dashboard</button>
     <button data-page="pos"><span class="ico">▣</span>Point of Sale</button>
+    <button data-page="shifts"><span class="ico">◷</span>Cashier Shifts</button>
     <button data-page="inventory"><span class="ico">▤</span>Inventory</button>
     <button data-page="sales"><span class="ico">↗</span>Sales History</button>
     <button data-page="customers"><span class="ico">♙</span>Customers & Credit</button>
@@ -234,7 +235,7 @@ async function verifyWorkspace() {
   }
   if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
-  const permissions = {platform_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','sales']};
+  const permissions = {platform_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};
   const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
   document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
@@ -278,7 +279,7 @@ let customers=[{name:'Nimal Perera',phone:'077 123 4567',balance:3200},{name:'Ka
 const money=n=>'LKR '+Number(n).toLocaleString('en-LK');
 const $=s=>document.querySelector(s);
 function toast(t){let e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-function page(p){const permissions={platform_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({pos:'Point of Sale',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
+function page(p){const permissions={platform_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));
 $('#menu').onclick=()=>$('#sidebar').classList.toggle('open');
 $('#theme').onclick=()=>{let d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';$('#theme').textContent=d.dataset.theme==='dark'?'☀':'☾'};
@@ -749,6 +750,64 @@ async function receivePurchase(id){
   toast('Stock received: '+(data?.quantity_received||0)+' units.');
   await loadSupplierData();showSupplierTab('purchases');await refreshLiveInventory();
 }
+async function shiftsPage(){
+  $('#view').innerHTML=heading('CASH CONTROL','Cashier shifts','Open a shift with starting cash, then close it after counting the till.')+
+  '<div id="shift-current" class="card" style="margin-bottom:16px"><p class="muted">Loading your shift…</p></div>'+
+  '<div class="card"><div class="cardhead"><h3>Recent shift history</h3><button class="secondary" onclick="shiftsPage()">↻ Refresh</button></div><div id="shift-history" class="tablecard">Loading shifts…</div></div>';
+  await loadShiftWorkspace();
+}
+let activeCashierShift=null;
+async function loadShiftWorkspace(){
+  const current=$('#shift-current'),history=$('#shift-history');
+  const {data:mine,error:mineError}=await db.from('cashier_shifts').select('*').eq('shop_id',currentShop.id).eq('cashier_id',currentUser.id).eq('status','open').maybeSingle();
+  if(mineError){current.innerHTML='<div class="notice">Could not load your shift: '+safeText(mineError.message)+'</div>';return;}
+  activeCashierShift=mine||null;
+  if(activeCashierShift){
+    const {data:sales,error}=await db.from('sales').select('total').eq('shift_id',activeCashierShift.id).eq('status','completed').eq('payment_method','cash');
+    if(error){current.innerHTML='<div class="notice">Could not calculate shift cash: '+safeText(error.message)+'</div>';return;}
+    const cashSales=(sales||[]).reduce((n,x)=>n+Number(x.total||0),0);
+    const expected=Number(activeCashierShift.opening_cash||0)+cashSales;
+    current.innerHTML='<div class="cardhead"><h3>Current open shift</h3><span class="badge warn">OPEN</span></div>'+
+      '<div class="stats"><div class="stat"><div class="stathead">Opening cash</div><strong>'+money(activeCashierShift.opening_cash)+'</strong></div>'+
+      '<div class="stat"><div class="stathead">Cash sales</div><strong>'+money(cashSales)+'</strong></div>'+
+      '<div class="stat"><div class="stathead">Expected cash</div><strong>'+money(expected)+'</strong></div></div>'+
+      '<p class="muted">Opened '+safeText(new Date(activeCashierShift.opened_at).toLocaleString())+'. Only completed cash sales attached to this shift are included.</p>'+
+      '<form id="close-shift-form" class="formrow" style="align-items:end"><div class="field"><label>Actual cash counted (LKR)</label><input name="closing_cash" type="number" min="0" step="0.01" required placeholder="Count the till"></div><div class="field"><label>Closing note (optional)</label><input name="closing_note" maxlength="500" placeholder="e.g. counted with manager"></div><button class="primary" type="submit">Close shift & reconcile</button></form><div id="shift-message" class="muted"></div>';
+    $('#close-shift-form').addEventListener('submit',closeCashierShift);
+  }else{
+    current.innerHTML='<div class="cardhead"><h3>No open shift</h3><span class="badge">READY</span></div><p class="muted">Enter the cash physically in the till before starting sales. One open shift is allowed per cashier per shop.</p>'+
+      '<form id="open-shift-form" class="formrow" style="align-items:end"><div class="field"><label>Opening cash (LKR)</label><input name="opening_cash" type="number" min="0" step="0.01" required value="0"></div><button class="primary" type="submit">Open cashier shift</button></form><div id="shift-message" class="muted"></div>';
+    $('#open-shift-form').addEventListener('submit',openCashierShift);
+  }
+  const {data:rows,error}=await db.from('cashier_shifts').select('*').eq('shop_id',currentShop.id).order('opened_at',{ascending:false}).limit(30);
+  if(error){history.innerHTML='<div class="notice">Could not load shift history: '+safeText(error.message)+'</div>';return;}
+  history.innerHTML=rows?.length?'<table><thead><tr><th>Cashier ID</th><th>Opened</th><th>Closed</th><th>Opening</th><th>Expected</th><th>Counted</th><th>Difference</th><th>Status</th></tr></thead><tbody>'+
+    rows.map(x=>'<tr><td>'+safeText(String(x.cashier_id).slice(0,8))+'…</td><td>'+safeText(new Date(x.opened_at).toLocaleString())+'</td><td>'+safeText(x.closed_at?new Date(x.closed_at).toLocaleString():'—')+'</td><td>'+money(x.opening_cash)+'</td><td>'+money(x.expected_cash??0)+'</td><td>'+money(x.closing_cash??0)+'</td><td><b>'+ (x.cash_difference===null?'—':money(x.cash_difference))+'</b></td><td><span class="badge '+(x.status==='open'?'warn':'')+'">'+safeText(x.status)+'</span></td></tr>').join('')+'</tbody></table>':'<div class="empty">No cashier shifts have been recorded yet.</div>';
+}
+async function openCashierShift(event){
+  event.preventDefault();const form=event.currentTarget,msg=$('#shift-message'),button=form.querySelector('button');
+  const amount=Number(form.elements.opening_cash.value);
+  if(!Number.isFinite(amount)||amount<0){msg.textContent='Enter a valid non-negative opening amount.';return;}
+  button.disabled=true;button.textContent='Opening…';
+  const {data,error}=await db.rpc('open_cashier_shift',{p_shop_id:currentShop.id,p_opening_cash:amount});
+  button.disabled=false;button.textContent='Open cashier shift';
+  if(error){msg.textContent='Could not open shift: '+error.message;return;}
+  toast('Cashier shift opened.');await loadShiftWorkspace();
+}
+async function closeCashierShift(event){
+  event.preventDefault();if(!activeCashierShift)return;
+  const form=event.currentTarget,msg=$('#shift-message'),button=form.querySelector('button');
+  const amount=Number(form.elements.closing_cash.value),note=form.elements.closing_note.value.trim();
+  if(!Number.isFinite(amount)||amount<0){msg.textContent='Enter a valid non-negative cash count.';return;}
+  if(!confirm('Close this shift with actual cash of '+money(amount)+'? This cannot be reopened.'))return;
+  button.disabled=true;button.textContent='Closing…';
+  const {data,error}=await db.rpc('close_cashier_shift',{p_shift_id:activeCashierShift.id,p_closing_cash:amount,p_closing_note:note||null});
+  button.disabled=false;button.textContent='Close shift & reconcile';
+  if(error){msg.textContent='Could not close shift: '+error.message;return;}
+  const result=Array.isArray(data)?data[0]:data;
+  toast('Shift closed. Difference: '+money(result?.cash_difference||0));await loadShiftWorkspace();
+}
+
 async function reportsPage(){
   $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Figures are calculated from BAJAJ transactions and current inventory.')+
   '<div class="notice">Sales value includes completed sales (including approved credit sales). Pending credit requests are excluded. Profit is not shown until cost-at-sale is recorded reliably.</div>'+
