@@ -1043,7 +1043,7 @@ async function loadProfitReport(){
     const mon=monthlyMap.get(month)||{month,revenue:0,cost:0,profit:0,transactions:new Set()};
     mon.revenue-=Number(r.refund_amount||0);mon.profit=mon.revenue-mon.cost;monthlyMap.set(month,mon);
   }
-  costOfGoods=Math.max(0,costOfGoods-returnedCost);
+  costOfGoods=costOfGoods-returnedCost;
   const revenue=sales.reduce((sum,s)=>sum+Number(s.total||0),0)-totalRefunds;
   const grossProfit=revenue-costOfGoods;
   const margin=revenue>0?(grossProfit/revenue)*100:0;
