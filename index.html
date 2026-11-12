@@ -210,6 +210,7 @@ async function refreshLiveInventory() {
     if (lowHost) lowHost.innerHTML = low.length ? '<div class="notice"><b>' + low.length + ' low-stock product(s).</b> ' + low.slice(0,5).map(p => safeText(p.product_name) + ' (' + Number(p.quantity||0) + ')').join(' · ') + (low.length>5?' · and more':'') + '</div>' : '<div class="notice">All products are above their low-stock thresholds.</div>';
     const count = document.querySelector('#live-product-count');
     if (count) count.textContent = rows.length;
+    await loadNotificationBadge();
   } catch (error) {
     target.innerHTML = '<div class="notice">Could not load inventory: ' + safeText(error.message) + '</div>';
   }
