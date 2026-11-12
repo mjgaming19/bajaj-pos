@@ -14,7 +14,7 @@ A responsive, browser-based multi-shop POS and management system for Bajaj spare
 - Supplier directory and purchase orders with stock receiving
 - Sales analytics, product profitability, cashier performance, shop expense tracking, net-profit reporting, and CSV exports
 - In-app notifications for low stock, pending credit approvals, and overdue credit balances
-- SaaS subscription plans, 14-day shop trials, billing-cycle and subscription-status management, and plan limits for Main Admin
+- SaaS subscription plans, 14-day shop trials, billing-cycle and subscription-status management, and database-enforced product/user limits
 - Shop business settings, receipt details, and activity/audit history
 - Light and dark themes with responsive desktop and mobile layouts
 
@@ -46,6 +46,7 @@ Never put a Supabase secret/service-role key in browser code. The publishable ke
 - This is an online-first application. Offline sales queuing and automatic background synchronization are not implemented.
 - In-app alerts are available; SMS, WhatsApp, and email reminder delivery are not configured.
 - Shop expenses are tracked separately from inventory cost of goods and deducted from gross profit to calculate net profit.
-- Subscription pricing and limits are editable by the Main Admin. Payment-gateway checkout and automated recurring collections are not connected yet.
+- Subscription pricing and limits are editable by the Main Admin. Product and user limits are enforced in the database. Payment-gateway checkout and automated recurring collections are not connected yet.
+- See [LAUNCH_CHECKLIST.md](./LAUNCH_CHECKLIST.md) for final browser acceptance tests and production setup requirements.
 - Receipts can be rendered/printed by the browser. Direct ESC/POS printer integration and hardware-specific scanner integrations are not included.
 - Use a separate Supabase project for development and production, and take database backups before production schema changes.
