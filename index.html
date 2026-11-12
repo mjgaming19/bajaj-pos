@@ -615,7 +615,10 @@ async function loadReturnableItems(){
   if(!saleId){host.textContent='Select a sale to view returnable items.';return;}
   const selectedSale=liveSales.find(s=>String(s.id)===String(saleId));
   const methodSelect=$('#return-method');
-  if(methodSelect&&selectedSale)methodSelect.innerHTML=selectedSale.payment_method==='credit'?'<option value="credit_adjustment">Reduce outstanding credit</option>':selectedSale.payment_method==='card'?'<option value="card">Card refund</option>':'<option value="cash">Cash refund</option>';
+  if(methodSelect&&selectedSale)methodSelect.innerHTML=selectedSale.payment_method==='credit'?
+    '<option value="credit_adjustment">Reduce outstanding credit</option>'+
+    (selectedSale.payment_status&&selectedSale.payment_status!=='unpaid'?'<option value="cash">Cash refund against cash repayments</option><option value="card">Card refund against card repayments</option>':''):
+    selectedSale.payment_method==='card'?'<option value="card">Card refund</option>':'<option value="cash">Cash refund</option>';
   host.textContent='Loading sale items…';
   const [{data:items,error:itemsError},{data:prior,error:priorError},products]=await Promise.all([
     db.from('sale_items').select('id,product_name,product_code,quantity,unit_price,line_total').eq('sale_id',saleId),
