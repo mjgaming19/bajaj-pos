@@ -821,3 +821,94 @@ $function$
 ;
 revoke all on function public.process_sale_exchange(uuid,jsonb,jsonb,text,text) from public,anon;
 grant execute on function public.process_sale_exchange(uuid,jsonb,jsonb,text,text) to authenticated;
+
+
+-- Permit exchanges to use returned stock when the returned part is marked resellable.
+CREATE OR REPLACE FUNCTION public.process_sale_exchange(p_sale_id uuid, p_return_items jsonb, p_replacement_items jsonb, p_reason text, p_payment_method text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+ v_sale public.sales%rowtype;
+ v_item record;
+ v_product public.products%rowtype;
+ v_return jsonb;
+ v_return_id uuid;
+ v_credit numeric(12,2);
+ v_subtotal numeric(12,2):=0;
+ v_due numeric(12,2);
+ v_new_sale_id uuid;
+ v_receipt text;
+begin
+ if auth.uid() is null then raise exception 'Authentication required.'; end if;
+ if p_reason is null or length(trim(p_reason))=0 then raise exception 'An exchange reason is required.'; end if;
+ if jsonb_typeof(p_replacement_items)<>'array' or jsonb_array_length(p_replacement_items)=0 then
+   raise exception 'Select at least one replacement product.';
+ end if;
+ if p_payment_method not in ('cash','card') then raise exception 'Exchange balance must be paid by cash or card.'; end if;
+ select * into v_sale from public.sales where id=p_sale_id for update;
+ if not found then raise exception 'Original sale not found.'; end if;
+ if v_sale.status<>'completed' or v_sale.payment_method not in ('cash','card') then
+   raise exception 'Only completed cash or card sales can be exchanged.';
+ end if;
+ if not public.has_shop_role(v_sale.shop_id,array['sub_admin']) then
+   raise exception 'Only a platform admin or shop sub-admin can process exchanges.';
+ end if;
+ if p_payment_method='cash' and not exists(
+   select 1 from public.cashier_shifts where shop_id=v_sale.shop_id and cashier_id=auth.uid() and status='open'
+ ) then
+   raise exception 'Open a cashier shift before completing a cash exchange.';
+ end if;
+
+ for v_item in select * from jsonb_to_recordset(p_replacement_items) as x(product_id uuid,quantity integer)
+ loop
+   if v_item.quantity is null or v_item.quantity<=0 then raise exception 'Replacement quantities must be positive.'; end if;
+   select * into v_product from public.products where id=v_item.product_id and shop_id=v_sale.shop_id for update;
+   if not found then raise exception 'A replacement product is not available in this shop.'; end if;
+   -- Stock is checked after returned sellable items have been restocked.
+   v_subtotal:=v_subtotal+(v_product.selling_price*v_item.quantity);
+ end loop;
+
+ v_return:=public.process_sale_return(p_sale_id,p_return_items,p_reason,'exchange_credit',false);
+ v_credit:=coalesce((v_return->>'refund_amount')::numeric,0);
+ if v_credit>v_subtotal then raise exception 'Replacement value must be at least the returned item value. Replacement value: %, exchange credit: %.',v_subtotal,v_credit; end if;
+ v_due:=v_subtotal-v_credit;
+ v_receipt:='BAJ-'||upper(substr(replace(gen_random_uuid()::text,'-',''),1,10));
+ insert into public.sales(shop_id,receipt_no,customer_id,cashier_id,status,payment_status,payment_method,subtotal,discount,total,notes)
+ values(v_sale.shop_id,v_receipt,v_sale.customer_id,auth.uid(),'completed','paid',p_payment_method,v_subtotal,v_credit,v_due,
+   'Replacement sale for exchange against '||coalesce(v_sale.receipt_no,p_sale_id::text))
+ returning id into v_new_sale_id;
+
+ for v_item in select * from jsonb_to_recordset(p_replacement_items) as x(product_id uuid,quantity integer)
+ loop
+   select * into v_product from public.products where id=v_item.product_id and shop_id=v_sale.shop_id for update;
+   update public.products set quantity=quantity-v_item.quantity,updated_at=now()
+    where id=v_product.id and quantity>=v_item.quantity;
+   if not found then raise exception 'Insufficient stock for replacement product %.',v_product.product_name; end if;
+   insert into public.sale_items(sale_id,product_id,product_name,product_code,quantity,unit_price,unit_cost,line_total)
+   values(v_new_sale_id,v_product.id,v_product.product_name,v_product.product_code,v_item.quantity,
+     v_product.selling_price,v_product.cost_price,v_product.selling_price*v_item.quantity);
+   insert into public.stock_movements(shop_id,product_id,movement_type,quantity_change,reference,notes,created_by)
+   values(v_sale.shop_id,v_product.id,'sale',-v_item.quantity,v_receipt,'Replacement item for exchange',auth.uid());
+ end loop;
+
+ if v_due>0 then
+   insert into public.payments(shop_id,sale_id,amount,method,received_by,notes)
+   values(v_sale.shop_id,v_new_sale_id,v_due,p_payment_method,auth.uid(),'Exchange balance');
+ end if;
+ v_return_id:=(v_return->>'return_id')::uuid;
+ update public.sale_returns set replacement_sale_id=v_new_sale_id where id=v_return_id;
+ insert into public.audit_logs(shop_id,user_id,action,details)
+ values(v_sale.shop_id,auth.uid(),'sale_exchange_processed',jsonb_build_object(
+   'original_sale_id',p_sale_id,'replacement_sale_id',v_new_sale_id,'return_id',v_return_id,
+   'exchange_credit',v_credit,'amount_paid',v_due
+ ));
+ return jsonb_build_object('return_id',v_return_id,'return_no',v_return->>'return_no',
+   'replacement_sale_id',v_new_sale_id,'receipt_no',v_receipt,'exchange_credit',v_credit,'amount_paid',v_due);
+end;
+$function$
+;
+revoke all on function public.process_sale_exchange(uuid,jsonb,jsonb,text,text) from public,anon;
+grant execute on function public.process_sale_exchange(uuid,jsonb,jsonb,text,text) to authenticated;
