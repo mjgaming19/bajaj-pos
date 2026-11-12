@@ -237,7 +237,7 @@ async function verifyWorkspace() {
   }
   if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
-  const permissions = {platform_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};
+  const permissions = {platform_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales','customers']};
   const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
   document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
@@ -409,10 +409,7 @@ function scanPOSCode() {
 function getCartSubtotal(){
   return cart.reduce((sum,x)=>{const p=livePosProducts.find(p=>String(p.id)===String(x.id));return sum+(p?Number(p.selling_price||0)*x.qty:0);},0);
 }
-function getDiscount(){
-  const input=$('#pos-discount');const raw=Number(input?.value||0);
-  return Number.isFinite(raw)?Math.max(0,Math.min(raw,getCartSubtotal())):0;
-}
+function getDiscount(){const manual=Number($('#pos-discount')?.value||0),points=Number($('#redeem-points')?.value||0);return (Number.isFinite(manual)?Math.max(0,manual):0)+(Number.isFinite(points)?Math.max(0,points):0);}
 function toggleCashTender(){
   const wrap=$('#cash-tender-wrap');if(wrap)wrap.style.display=$('#payment')?.value==='cash'?'block':'none';
   updateCashChange();
@@ -465,23 +462,35 @@ async function loadPOSCustomers(){
   if(error){select.innerHTML='<option value="">Could not load customers</option>';return;}
   liveCustomers=data||[];
   select.innerHTML='<option value="">Walk-in customer</option>'+liveCustomers.map(c=>'<option value="'+safeText(c.id)+'">'+safeText(c.name)+(c.phone?' · '+safeText(c.phone):'')+'</option>').join('');
+  await loadPOSLoyaltyBalance();
+}
+async function loadPOSLoyaltyBalance(){
+  const id=$('#pos-customer')?.value,wrap=$('#pos-loyalty-wrap'),input=$('#redeem-points');if(!wrap||!input)return;
+  input.value='0';if(!id){wrap.style.display='none';renderCart();return;}
+  const {data,error}=await db.from('customer_loyalty_points').select('points').eq('shop_id',currentShop.id).eq('customer_id',id);
+  if(error){wrap.style.display='none';toast('Could not load loyalty points.');return;}
+  const balance=(data||[]).reduce((n,x)=>n+Number(x.points||0),0);
+  wrap.style.display='block';input.max=Math.max(0,balance);$('#loyalty-available').textContent='Available: '+Math.max(0,balance)+' points · 1 point = LKR 1';renderCart();
 }
 function toggleCreditCustomer(){
-  const credit=$('#payment')?.value==='credit', select=$('#pos-customer');
+  const credit=$('#payment')?.value==='credit',select=$('#pos-customer'),points=$('#redeem-points');
   if(select){select.required=credit;select.style.borderColor=credit&&!select.value?'var(--red)':'var(--line)';}
+  if(points){points.disabled=credit;if(credit&&Number(points.value||0)>0){points.value='0';renderCart();}}
 }
 async function checkout() {
   if (!cart.length) { toast('Add products to the cart first.'); return; }
   const button=$('#checkout-button'),message=$('#checkout-message');
   const paymentMethod=$('#payment').value,customerId=$('#pos-customer').value||null;
-  const subtotal=getCartSubtotal(),discount=getDiscount(),total=Math.max(0,subtotal-discount);
+  const subtotal=getCartSubtotal(),discount=getDiscount(),total=Math.max(0,subtotal-discount),loyaltyPoints=Math.floor(Number($('#redeem-points')?.value||0)),manualDiscount=Number($('#pos-discount')?.value||0);
+  if(paymentMethod==='credit'&&loyaltyPoints>0){message.textContent='Loyalty points cannot be used on credit sales.';return;}
+  if(!Number.isInteger(loyaltyPoints)||loyaltyPoints<0||(loyaltyPoints>0&&loyaltyPoints<100)){message.textContent='Redeem at least 100 whole points, or set points to zero.';return;}
   if(paymentMethod==='credit'&&!customerId){message.textContent='Select a registered customer before creating a credit sale.';toggleCreditCustomer();return;}
   if(paymentMethod==='cash'){
     const {data:openShift,error:shiftError}=await db.from('cashier_shifts').select('id').eq('shop_id',currentShop.id).eq('cashier_id',currentUser.id).eq('status','open').maybeSingle();
     if(shiftError){message.textContent='Could not verify your cashier shift: '+shiftError.message;return;}
     if(!openShift){message.textContent='Open a cashier shift before accepting cash. Go to Cashier Shifts to enter your opening cash.';return;}
   }
-  if(discount>subtotal){message.textContent='Discount cannot exceed the subtotal.';return;}
+  if(discount>subtotal){message.textContent='Combined discount and loyalty redemption cannot exceed the subtotal.';return;}
   if(paymentMethod==='cash'){
     const tendered=Number($('#cash-tendered')?.value||0);
     if(!Number.isFinite(tendered)||tendered<total){message.textContent='Cash received must be at least the sale total.';return;}
@@ -490,7 +499,7 @@ async function checkout() {
   const customer=(liveCustomers||[]).find(c=>String(c.id)===String(customerId));
   button.disabled=true;button.textContent='Processing…';message.textContent='';
   const items=cart.map(x=>({product_id:x.id,quantity:x.qty}));
-  const {data,error}=await db.rpc('create_sale',{p_shop_id:currentShop.id,p_customer_id:customerId,p_payment_method:paymentMethod,p_items:items,p_discount:discount});
+  const {data,error}=await db.rpc('create_sale',{p_shop_id:currentShop.id,p_customer_id:customerId,p_payment_method:paymentMethod,p_items:items,p_discount:manualDiscount,p_loyalty_points:loyaltyPoints});
   button.disabled=false;button.textContent='Complete sale';
   if(error){message.textContent='Sale was not completed: '+error.message;return;}
   const result=Array.isArray(data)?data[0]:data;
@@ -710,8 +719,8 @@ async function customersPage(){
   $('#view').innerHTML = heading('CUSTOMER ACCOUNTS','Customers','Register customers and keep their contact details in one place.') +
     '<div class="toolbar"><input class="search" id="customer-search" placeholder="Search customer name or phone…" oninput="filterLiveCustomers()"><button class="secondary" onclick="refreshLiveCustomers()">↻ Refresh</button></div>' +
     '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Add a customer</h3><span>Saved to BAJAJ Supabase</span></div>' +
-    '<form id="new-customer-form" class="formrow" style="align-items:end"><div class="field"><label>Customer name</label><input name="name" required maxlength="160" placeholder="Full name"></div><div class="field"><label>Phone number</label><input name="phone" maxlength="40" placeholder="07X XXX XXXX"></div><div class="field"><label>Address</label><input name="address" maxlength="500" placeholder="Optional address"></div><button class="primary" type="submit">＋ Save customer</button></form><div id="customer-form-message" class="muted" style="font-size:12px"></div></div>' +
-    '<div class="card"><div class="cardhead"><h3>Customer directory</h3><span id="customer-count">Loading…</span></div><div id="live-customers"><p class="muted">Loading customers…</p></div></div>';
+    '<form id="new-customer-form" class="formrow" style="align-items:end"><div class="field"><label>Customer name</label><input name="name" required maxlength="160" placeholder="Full name"></div><div class="field"><label>Phone number</label><input name="phone" maxlength="40" placeholder="07X XXX XXXX"></div><div class="field"><label>Email</label><input name="email" type="email" maxlength="180" placeholder="Optional email"></div><div class="field"><label>Address</label><input name="address" maxlength="500" placeholder="Optional address"></div><div class="field"><label>Notes</label><input name="notes" maxlength="500" placeholder="Vehicle / preferences / notes"></div><button class="primary" type="submit">＋ Save customer</button></form><div id="customer-form-message" class="muted" style="font-size:12px"></div></div>' +
+    '<div class="card"><div class="cardhead"><h3>Customer directory</h3><span id="customer-count">Loading…</span></div><div id="live-customers"><p class="muted">Loading customers…</p></div></div><div id="customer-detail" style="margin-top:16px"></div>';
   await refreshLiveCustomers();
   $('#new-customer-form').addEventListener('submit', addLiveCustomer);
 }
@@ -723,7 +732,7 @@ async function refreshLiveCustomers(){
   if (!target) return;
   target.innerHTML = '<p class="muted">Loading customers…</p>';
   const {data,error} = await db.from('customers')
-    .select('id,name,phone,address,created_at')
+    .select('id,name,phone,email,address,notes,created_at')
     .eq('shop_id',currentShop.id)
     .order('name');
   if(error){
@@ -732,9 +741,15 @@ async function refreshLiveCustomers(){
     return;
   }
   liveCustomers = data || [];
+  const [salesResult,pointsResult]=await Promise.all([db.from('sales').select('customer_id,total,returned_amount,status').eq('shop_id',currentShop.id).not('customer_id','is',null),db.from('customer_loyalty_points').select('customer_id,points').eq('shop_id',currentShop.id)]);
+  customerStats={};
+  for(const s of salesResult.data||[]){if(s.status!=='completed')continue;const x=customerStats[s.customer_id]||(customerStats[s.customer_id]={purchases:0,spend:0,points:0});x.purchases++;x.spend+=Math.max(0,Number(s.total||0)-Number(s.returned_amount||0));}
+  for(const p of pointsResult.data||[]){const x=customerStats[p.customer_id]||(customerStats[p.customer_id]={purchases:0,spend:0,points:0});x.points+=Number(p.points||0);}
   filterLiveCustomers();
 }
 
+let customerStats={};
+function customerTier(spend){return spend>=150000?'Platinum':spend>=50000?'Gold':spend>=10000?'Silver':'Bronze';}
 function filterLiveCustomers(){
   const target = $('#live-customers');
   if(!target) return;
@@ -758,11 +773,13 @@ async function addLiveCustomer(event){
   const name = String(values.name||'').trim();
   const phone = String(values.phone||'').trim();
   const address = String(values.address||'').trim();
+  const email = String(values.email||'').trim();
+  const notes = String(values.notes||'').trim();
   if(!name){ message.textContent='Please enter the customer name.'; return; }
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true; button.textContent = 'Saving…'; message.textContent = '';
   const {error} = await db.from('customers').insert({
-    shop_id:currentShop.id, name, phone:phone||null, address:address||null
+    shop_id:currentShop.id, name, phone:phone||null, email:email||null, address:address||null, notes:notes||null
   });
   button.disabled = false; button.textContent = '＋ Save customer';
   if(error){ message.textContent='Could not save customer: '+error.message; return; }
@@ -776,9 +793,11 @@ async function editLiveCustomer(id){
   const name = prompt('Customer name:',customer.name||''); if(name===null) return;
   const phone = prompt('Phone number:',customer.phone||''); if(phone===null) return;
   const address = prompt('Address:',customer.address||''); if(address===null) return;
+  const email = prompt('Email:',customer.email||''); if(email===null) return;
+  const notes = prompt('Notes:',customer.notes||''); if(notes===null) return;
   if(!name.trim()){ alert('Customer name is required.'); return; }
   const {error} = await db.from('customers').update({
-    name:name.trim(), phone:phone.trim()||null, address:address.trim()||null
+    name:name.trim(), phone:phone.trim()||null, email:email.trim()||null, address:address.trim()||null, notes:notes.trim()||null
   }).eq('id',id).eq('shop_id',currentShop.id);
   if(error){ alert('Could not update customer: '+error.message); return; }
   toast('Customer updated.');
