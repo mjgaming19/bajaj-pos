@@ -16,6 +16,9 @@ create index if not exists customer_loyalty_points_customer_created_idx
  on public.customer_loyalty_points(shop_id,customer_id,created_at desc);
 create index if not exists customer_loyalty_points_sale_idx
  on public.customer_loyalty_points(sale_id) where sale_id is not null;
+create index if not exists customer_loyalty_points_customer_id_idx on public.customer_loyalty_points(customer_id);
+create index if not exists customer_loyalty_points_created_by_idx on public.customer_loyalty_points(created_by);
+create index if not exists customers_shop_id_idx on public.customers(shop_id);
 alter table public.customer_loyalty_points enable row level security;
 revoke all on public.customer_loyalty_points from anon,authenticated;
 grant select on public.customer_loyalty_points to authenticated;
