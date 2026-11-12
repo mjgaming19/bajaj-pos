@@ -688,11 +688,11 @@ async function submitSaleExchange(){
 
 async function loadReturnHistory(){
   const host=$('#return-history-list');if(!host)return;
-  const {data,error}=await db.from('sale_returns').select('id,sale_id,return_no,refund_method,refund_amount,reason,created_at').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
+  const {data,error}=await db.from('sale_returns').select('id,sale_id,replacement_sale_id,return_no,refund_method,refund_amount,reason,created_at').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
   if(error){host.innerHTML='<div class="notice">Could not load return history: '+safeText(error.message)+'</div>';return;}
   const rows=data||[];
-  host.innerHTML=rows.length?'<table><thead><tr><th>Return no.</th><th>Original sale</th><th>Date</th><th>Method</th><th>Amount</th><th>Reason</th></tr></thead><tbody>'+
-    rows.map(r=>'<tr><td><b>'+safeText(r.return_no)+'</b></td><td>'+safeText(saleLabel(liveSales.find(s=>s.id===r.sale_id)||{id:r.sale_id}))+'</td><td>'+safeText(new Date(r.created_at).toLocaleString())+'</td><td>'+safeText(r.refund_method.replace('_',' '))+'</td><td>'+money(Number(r.refund_amount||0))+'</td><td>'+safeText(r.reason)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No returns have been processed yet.</div>';
+  host.innerHTML=rows.length?'<table><thead><tr><th>Return no.</th><th>Original sale</th><th>Replacement sale</th><th>Date</th><th>Method</th><th>Amount</th><th>Reason</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr><td><b>'+safeText(r.return_no)+'</b></td><td>'+safeText(saleLabel(liveSales.find(s=>s.id===r.sale_id)||{id:r.sale_id}))+'</td><td>'+safeText(r.replacement_sale_id?saleLabel(liveSales.find(s=>s.id===r.replacement_sale_id)||{id:r.replacement_sale_id}):'—')+'</td><td>'+safeText(new Date(r.created_at).toLocaleString())+'</td><td>'+safeText(r.refund_method.replace('_',' '))+'</td><td>'+money(Number(r.refund_amount||0))+'</td><td>'+safeText(r.reason)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No returns have been processed yet.</div>';
 }
 
 async function submitRepayment(){
