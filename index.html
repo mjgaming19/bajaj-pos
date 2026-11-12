@@ -58,6 +58,7 @@ body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:no
   <div class="brand"><img src="assets/bajaj-logo.png" alt="BAJAJ logo"><small>SPARE PARTS MANAGEMENT</small></div>
   <div><div class="navlabel">WORKSPACE</div><nav class="nav">
     <button class="active" data-page="dashboard"><span class="ico">▦</span>Dashboard</button>
+    <button data-page="notifications"><span class="ico">♢</span>Notifications</button>
     <button data-page="pos"><span class="ico">▣</span>Point of Sale</button>
     <button data-page="shifts"><span class="ico">◷</span>Cashier Shifts</button>
     <button data-page="inventory"><span class="ico">▤</span>Inventory</button>
@@ -237,7 +238,7 @@ async function verifyWorkspace() {
   }
   if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
-  const permissions = {platform_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales','customers']};
+  const permissions = {platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales','customers']};
   const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
   document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
@@ -245,6 +246,7 @@ async function verifyWorkspace() {
   document.querySelector('.sidefoot strong').textContent = isPlatformAdmin ? 'Main Admin · Connected' : (currentUserRole === 'sub_admin' ? 'Sub-admin · Connected' : 'POS User · Connected');
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
   await page('dashboard');
+  await loadNotificationBadge();
 }
 
 document.querySelector('#login-form').addEventListener('submit', async (event) => {
@@ -281,11 +283,82 @@ let customers=[{name:'Nimal Perera',phone:'077 123 4567',balance:3200},{name:'Ka
 const money=n=>'LKR '+Number(n).toLocaleString('en-LK');
 const $=s=>document.querySelector(s);
 function toast(t){let e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-function page(p){const permissions={platform_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
+function page(p){const permissions={platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','reports','shops','users','settings'],sub_admin:['dashboard','pos','shifts','inventory','sales','customers','suppliers','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({notifications:'Notifications',pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,notifications:notificationsPage,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));
 $('#menu').onclick=()=>$('#sidebar').classList.toggle('open');
 $('#theme').onclick=()=>{let d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';$('#theme').textContent=d.dataset.theme==='dark'?'☀':'☾'};
 function heading(k,t,s,action=''){return `<div class="heading"><div><div class="eyebrow">${k}</div><h1>${t}</h1><p>${s}</p></div>${action}</div>`}
+async function loadNotificationBadge(){
+  if(!currentShop)return;
+  const button=document.querySelector('.nav button[data-page="notifications"]');
+  if(!button)return;
+  const {count,error}=await db.from('notifications').select('id',{count:'exact',head:true})
+    .eq('shop_id',currentShop.id).is('read_at',null).is('resolved_at',null);
+  if(error)return;
+  button.innerHTML='<span class="ico">♢</span>Notifications'+(count?'<span class="badge warn">'+count+'</span>':'');
+}
+async function notificationsPage(){
+  const overdueDays=30;
+  $('#view').innerHTML=heading('ALERT CENTRE','Notifications & reminders','Low-stock alerts, pending credit approvals and overdue customer balances.')+
+    '<div class="toolbar"><button class="secondary" onclick="notificationsPage()">↻ Refresh alerts</button><button class="secondary" onclick="markAllNotificationsRead()">Mark all stock alerts as read</button></div>'+
+    '<div id="notifications-content"><p class="muted">Loading notifications…</p></div>';
+  const cutoff=new Date(Date.now()-overdueDays*24*60*60*1000).toISOString();
+  const [notesResult,pendingResult,overdueResult]=await Promise.all([
+    db.from('notifications').select('*').eq('shop_id',currentShop.id).is('resolved_at',null).order('created_at',{ascending:false}).limit(100),
+    db.from('sales').select('id,receipt_no,total,sold_at,customer_id').eq('shop_id',currentShop.id).eq('status','pending_approval').order('sold_at',{ascending:true}),
+    db.from('sales').select('id,receipt_no,total,returned_amount,sold_at,customer_id').eq('shop_id',currentShop.id).eq('status','completed').eq('payment_method','credit').neq('payment_status','paid').lt('sold_at',cutoff).order('sold_at',{ascending:true})
+  ]);
+  const host=$('#notifications-content');if(!host)return;
+  if(notesResult.error){host.innerHTML='<div class="notice">Could not load notifications: '+safeText(notesResult.error.message)+'</div>';return;}
+  if(pendingResult.error){host.innerHTML='<div class="notice">Could not load pending approvals: '+safeText(pendingResult.error.message)+'</div>';return;}
+  if(overdueResult.error){host.innerHTML='<div class="notice">Could not load overdue credit reminders: '+safeText(overdueResult.error.message)+'</div>';return;}
+  const overdueSales=overdueResult.data||[],pendingSales=pendingResult.data||[];
+  const saleIds=overdueSales.map(s=>s.id),customerIds=[...new Set([...overdueSales,...pendingSales].map(s=>s.customer_id).filter(Boolean))];
+  const [paymentsResult,customersResult]=await Promise.all([
+    saleIds.length?db.from('payments').select('sale_id,amount').in('sale_id',saleIds):Promise.resolve({data:[],error:null}),
+    customerIds.length?db.from('customers').select('id,name,phone').in('id',customerIds):Promise.resolve({data:[],error:null})
+  ]);
+  if(paymentsResult.error||customersResult.error){
+    host.innerHTML='<div class="notice">Could not load credit reminder details: '+safeText((paymentsResult.error||customersResult.error).message)+'</div>';return;
+  }
+  const paidBySale=new Map();
+  (paymentsResult.data||[]).forEach(p=>paidBySale.set(p.sale_id,(paidBySale.get(p.sale_id)||0)+Number(p.amount||0)));
+  const customerById=new Map((customersResult.data||[]).map(c=>[c.id,c]));
+  const notes=notesResult.data||[];
+  const unread=notes.filter(n=>!n.read_at).length;
+  const noteRows=notes.length?notes.map(n=>'<div class="cartline"><div style="flex:1"><b>'+safeText(n.title)+'</b><div class="muted">'+safeText(n.message)+'</div><small class="muted">'+safeText(new Date(n.created_at).toLocaleString())+'</small></div><div>'+(!n.read_at?'<button class="secondary" onclick="markNotificationRead(\\''+safeText(n.id)+'\\')">Mark read</button>':'<span class="badge">Read</span>')+'</div></div>').join(''):'<div class="empty">No active stock alerts. You’re all caught up.</div>';
+  const pendingRows=pendingSales.length?pendingSales.map(s=>{
+    const customer=customerById.get(s.customer_id);
+    return '<div class="cartline"><div><b>'+safeText(s.receipt_no||String(s.id).slice(0,8))+'</b><div class="muted">'+safeText(customer?.name||'Customer not linked')+' · '+safeText(s.sold_at?new Date(s.sold_at).toLocaleDateString():'')+'</div></div><b>'+money(Number(s.total||0))+'</b></div>';
+  }).join(''):'<div class="empty">No credit sales are waiting for approval.</div>';
+  const overdueRows=overdueSales.map(s=>{
+    const paid=paidBySale.get(s.id)||0,remaining=Math.max(0,Number(s.total||0)-Number(s.returned_amount||0)-paid);
+    if(remaining<=0)return '';
+    const customer=customerById.get(s.customer_id);
+    const age=Math.floor((Date.now()-new Date(s.sold_at).getTime())/(24*60*60*1000));
+    return '<div class="cartline"><div><b>'+safeText(customer?.name||'Unknown customer')+'</b><div class="muted">'+safeText(s.receipt_no||String(s.id).slice(0,8))+' · '+age+' days old'+(customer?.phone?' · '+safeText(customer.phone):'')+'</div></div><div style="text-align:right"><b>'+money(remaining)+'</b><div><span class="badge warn">Overdue</span></div></div></div>';
+  }).filter(Boolean).join('');
+  host.innerHTML='<div class="stats">'+
+    '<div class="stat"><div class="stathead">Unread stock alerts</div><strong>'+unread+'</strong><small>Active notifications</small></div>'+
+    '<div class="stat"><div class="stathead">Pending approvals</div><strong>'+pendingSales.length+'</strong><small>Credit sales awaiting review</small></div>'+
+    '<div class="stat"><div class="stathead">Overdue credit sales</div><strong>'+overdueSales.length+'</strong><small>Older than '+overdueDays+' days</small></div>'+
+    '<div class="stat"><div class="stathead">Outstanding overdue</div><strong>'+money(overdueSales.reduce((sum,s)=>sum+Math.max(0,Number(s.total||0)-Number(s.returned_amount||0)-(paidBySale.get(s.id)||0)),0))+'</strong><small>After repayments and returns</small></div></div>'+
+    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Stock alerts</h3><span>'+notes.length+' active</span></div>'+noteRows+'</div>'+
+    '<div class="card"><div class="cardhead"><h3>Pending credit approvals</h3><button class="secondary" onclick="page(\\'sales\\')">Review sales →</button></div>'+pendingRows+'</div></div>'+
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Overdue customer credit</h3><span>30+ days outstanding</span></div>'+ (overdueRows||'<div class="empty">No overdue credit balances found.</div>') +'</div>';
+  await loadNotificationBadge();
+}
+async function markNotificationRead(id){
+  const {error}=await db.rpc('mark_notification_read',{p_notification_id:id});
+  if(error){toast('Could not mark notification as read: '+error.message);return;}
+  await notificationsPage();
+}
+async function markAllNotificationsRead(){
+  const {data,error}=await db.rpc('mark_all_notifications_read',{p_shop_id:currentShop.id});
+  if(error){toast('Could not update notifications: '+error.message);return;}
+  toast((Number(data)||0)+' stock alert(s) marked as read.');
+  await notificationsPage();
+}
 async function dashboard(){
   $('#view').innerHTML=heading('OVERVIEW','Good day, Main Admin 👋','Live figures from your selected BAJAJ shop.','<button class="primary" onclick="page(&quot;pos&quot;)">＋ New sale</button>')+
   '<div id="dashboard-live"><p class="muted">Loading live business figures…</p></div>';
