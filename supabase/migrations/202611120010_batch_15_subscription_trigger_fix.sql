@@ -34,3 +34,6 @@ drop trigger if exists shop_subscriptions_touch_updated_at on public.shop_subscr
 create trigger shop_subscriptions_touch_updated_at
 before update on public.shop_subscriptions
 for each row execute function public.touch_shop_subscription_updated_at();
+
+revoke execute on function public.create_shop_trial_subscription() from public, anon, authenticated;
+revoke execute on function public.log_subscription_change() from public, anon, authenticated;
