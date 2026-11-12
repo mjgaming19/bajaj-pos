@@ -1171,7 +1171,7 @@ async function editExpense(id){
   const payment_method=prompt('Payment method (cash, card, bank, other):',x.payment_method);if(payment_method===null)return;
   const notes=prompt('Notes:',x.notes||'');if(notes===null)return;
   const value=Number(amount),cat=category.trim(),desc=description.trim();
-  if(!expenseCategories.includes(cat)||!desc||!Number.isFinite(value)||value<=0||!/^\\d{4}-\\d{2}-\\d{2}$/.test(expense_date)||!['cash','card','bank','other'].includes(payment_method.trim())){alert('Enter valid category, description, amount, date and payment method.');return;}
+  if(!expenseCategories.includes(cat)||!desc||!Number.isFinite(value)||value<=0||!/^(?:\d{4})-(?:\d{2})-(?:\d{2})$/.test(expense_date)||!['cash','card','bank','other'].includes(payment_method.trim())){alert('Enter valid category, description, amount, date and payment method.');return;}
   const {error}=await db.from('expenses').update({category:cat,description:desc,amount:value,expense_date,payment_method:payment_method.trim(),notes:notes.trim()||null}).eq('id',id).eq('shop_id',currentShop.id);
   if(error){alert('Could not update expense: '+error.message);return;}
   toast('Expense updated.');await loadExpenses();
