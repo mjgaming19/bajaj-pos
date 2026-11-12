@@ -531,6 +531,8 @@ async function salesPage(){
   '<div class="toolbar"><div class="field"><label>From date</label><input class="search" id="sales-from" type="date" onchange="filterLiveSales()"></div><div class="field"><label>To date</label><input class="search" id="sales-to" type="date" onchange="filterLiveSales()"></div><div class="field"><label>Payment method</label><select class="search" id="sales-method" onchange="filterLiveSales()"><option value="">All methods</option><option value="cash">Cash</option><option value="card">Card</option><option value="credit">Credit</option></select></div><div class="field"><label>Sale status</label><select class="search" id="sales-status" onchange="filterLiveSales()"><option value="">All statuses</option><option value="completed">Completed</option><option value="pending_approval">Pending approval</option><option value="rejected">Rejected</option><option value="voided">Voided</option></select></div></div>'+
   '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Pending credit approvals</h3><span id="pending-count">Loading…</span></div><div id="pending-credit-list" class="muted">Loading pending credit sales…</div></div>'+
   '<div class="card"><div class="cardhead"><h3>All transactions</h3><span id="sales-count">Loading…</span></div><div id="live-sales-table" class="tablecard">Loading sales…</div></div>'+
+  ((isPlatformAdmin||currentUserRole==='sub_admin')?'<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Process a product return</h3><span>Manager approval</span></div><div class="formrow"><div class="field"><label>Original sale</label><select id="return-sale" onchange="loadReturnableItems()"><option value="">Select a completed sale</option></select></div><div class="field"><label>Refund method</label><select id="return-method"><option value="cash">Cash refund</option><option value="card">Card refund</option><option value="credit_adjustment">Reduce outstanding credit</option></select></div></div><div id="return-items-list" class="muted" style="margin:12px 0">Select a sale to view returnable items.</div><div class="field"><label>Reason for return</label><input id="return-reason" maxlength="300" placeholder="e.g. Wrong part supplied"></div><button class="primary" style="margin-top:12px" onclick="submitSaleReturn()">Process return</button><div id="return-message" class="muted" style="margin-top:8px"></div><p class="muted">Cash/card refunds must already have been issued before confirming. Unopened or resellable items can be added back to stock; uncheck Restock for damaged items.</p></div>':'')+
+  '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Return history</h3><button class="secondary" onclick="loadReturnHistory()">↻ Refresh</button></div><div id="return-history-list" class="tablecard">Loading returns…</div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Record a credit repayment</h3></div><div class="formrow"><div class="field"><label>Credit sale</label><select id="repayment-sale"><option value="">Select an outstanding credit sale</option></select></div><div class="field"><label>Amount (LKR)</label><input id="repayment-amount" type="number" min="0.01" step="0.01" placeholder="Amount received"></div><div class="field"><label>Payment method</label><select id="repayment-method"><option value="cash">Cash</option><option value="card">Card</option></select></div><button class="primary" onclick="submitRepayment()">Record repayment</button></div><div id="repayment-message" class="muted"></div></div>';
   await loadLiveSales();
 }
@@ -544,6 +546,8 @@ async function loadLiveSales(){
   const {data,error}=await db.from('sales').select('*').eq('shop_id',currentShop.id).order('sold_at',{ascending:false});
   if(error){target.innerHTML='<div class="notice">Could not load sales: '+safeText(error.message)+'</div>';return;}
   liveSales=data||[];
+  const returnSaleSelect=$('#return-sale');
+  if(returnSaleSelect) returnSaleSelect.innerHTML='<option value="">Select a completed sale</option>'+liveSales.filter(s=>s.status==='completed').map(s=>'<option value="'+safeText(s.id)+'">'+safeText(saleLabel(s))+' · '+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</option>').join('');
   const pending=liveSales.filter(s=>s.status==='pending_approval');
   $('#pending-count').textContent=pending.length+' awaiting approval';
   $('#pending-credit-list').innerHTML=pending.length?pending.map(s=>'<div class="cartline"><div><b>'+safeText(saleLabel(s))+'</b><div class="muted">'+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+'</div></div><div><button class="primary" onclick="approveCreditSale(\''+safeText(s.id)+'\')">Approve</button> <button class="danger" onclick="rejectCreditSale(\''+safeText(s.id)+'\')">Reject</button></div></div>').join(''):'<div class="empty">No credit sales awaiting approval.</div>';
@@ -551,6 +555,7 @@ async function loadLiveSales(){
   const select=$('#repayment-sale');
   if(select)select.innerHTML='<option value="">Select an outstanding credit sale</option>'+outstanding.map(s=>'<option value="'+safeText(s.id)+'">'+safeText(saleLabel(s))+' · '+safeText(customerLabel(s.customer_id))+' · '+money(Number(s.total||0))+' · '+safeText(s.payment_status||'unpaid')+'</option>').join('');
   filterLiveSales();
+  await loadReturnHistory();
 }
 function filterLiveSales(){
   const target=$('#live-sales-table');if(!target)return;
@@ -601,6 +606,58 @@ async function voidSale(id){
   const {error}=await db.rpc('void_sale',{p_sale_id:id,p_reason:reason.trim(),p_refund_confirmed:refundConfirmed});
   if(error){toast('Cancellation failed: '+error.message);return;}
   toast('Sale cancelled and stock restored.');await loadLiveSales();await refreshPOSProducts();await refreshLiveInventory();
+}
+
+async function loadReturnableItems(){
+  const saleId=$('#return-sale')?.value,host=$('#return-items-list');
+  if(!host)return;
+  if(!saleId){host.textContent='Select a sale to view returnable items.';return;}
+  host.textContent='Loading sale items…';
+  const [{data:items,error:itemsError},{data:prior,error:priorError}]=await Promise.all([
+    db.from('sale_items').select('id,product_name,product_code,quantity,unit_price,line_total').eq('sale_id',saleId),
+    db.from('sale_return_items').select('sale_item_id,quantity')
+  ]);
+  if(itemsError||priorError){host.innerHTML='<div class="notice">Could not load returnable items: '+safeText(itemsError?.message||priorError?.message)+'</div>';return;}
+  const returned=new Map();
+  for(const row of prior||[])returned.set(row.sale_item_id,(returned.get(row.sale_item_id)||0)+Number(row.quantity||0));
+  const available=(items||[]).map(item=>({...item,remaining:Number(item.quantity)-Number(returned.get(item.id)||0)})).filter(item=>item.remaining>0);
+  host.innerHTML=available.length?'<div class="tablecard"><table><thead><tr><th>Part</th><th>Sold</th><th>Remaining</th><th>Return qty</th><th>Restock?</th></tr></thead><tbody>'+
+    available.map(item=>'<tr><td><b>'+safeText(item.product_name)+'</b><div class="muted">'+safeText(item.product_code||'')+'</div></td><td>'+item.quantity+'</td><td>'+item.remaining+'</td><td><input class="return-qty" data-sale-item-id="'+safeText(item.id)+'" type="number" min="0" max="'+item.remaining+'" step="1" value="0" style="width:90px"></td><td><input class="return-restock" data-sale-item-id="'+safeText(item.id)+'" type="checkbox" checked aria-label="Restock '+safeText(item.product_name)+'"></td></tr>').join('')+'</tbody></table></div>':'<div class="empty">All items from this sale have already been returned.</div>';
+}
+async function submitSaleReturn(){
+  const saleId=$('#return-sale')?.value,reason=String($('#return-reason')?.value||'').trim(),method=$('#return-method')?.value;
+  const message=$('#return-message');
+  if(!saleId){message.textContent='Select the original sale first.';return;}
+  if(!reason){message.textContent='Enter a reason for the return.';return;}
+  const items=[...document.querySelectorAll('.return-qty')].map(input=>({
+    sale_item_id:input.dataset.saleItemId,quantity:Number(input.value||0),
+    restock:!!document.querySelector('.return-restock[data-sale-item-id="'+input.dataset.saleItemId+'"]')?.checked
+  })).filter(item=>item.quantity>0);
+  if(!items.length){message.textContent='Enter a return quantity for at least one item.';return;}
+  let refundConfirmed=false;
+  if(method==='cash'||method==='card'){
+    refundConfirmed=confirm('Only continue if the customer has ALREADY received the '+method+' refund.\n\nThe system records the refund and restores eligible stock; it does not transfer money.');
+    if(!refundConfirmed)return;
+  }else if(!confirm('Apply this return amount against the customer’s outstanding credit balance?'))return;
+  const button=document.querySelector('button[onclick="submitSaleReturn()"]');
+  if(button){button.disabled=true;button.textContent='Processing…';}
+  const {data,error}=await db.rpc('process_sale_return',{
+    p_sale_id:saleId,p_items:items,p_reason:reason,p_refund_method:method,p_refund_confirmed:refundConfirmed
+  });
+  if(button){button.disabled=false;button.textContent='Process return';}
+  if(error){message.textContent='Return was not processed: '+error.message;return;}
+  message.textContent='Return '+(data?.return_no||'')+' processed. Refund / credit adjustment: '+money(Number(data?.refund_amount||0))+'.';
+  $('#return-reason').value='';
+  await loadLiveSales();await loadReturnableItems();await refreshPOSProducts();await refreshLiveInventory();
+  toast('Product return processed.');
+}
+async function loadReturnHistory(){
+  const host=$('#return-history-list');if(!host)return;
+  const {data,error}=await db.from('sale_returns').select('id,sale_id,return_no,refund_method,refund_amount,reason,created_at').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
+  if(error){host.innerHTML='<div class="notice">Could not load return history: '+safeText(error.message)+'</div>';return;}
+  const rows=data||[];
+  host.innerHTML=rows.length?'<table><thead><tr><th>Return no.</th><th>Original sale</th><th>Date</th><th>Method</th><th>Amount</th><th>Reason</th></tr></thead><tbody>'+
+    rows.map(r=>'<tr><td><b>'+safeText(r.return_no)+'</b></td><td>'+safeText(saleLabel(liveSales.find(s=>s.id===r.sale_id)||{id:r.sale_id}))+'</td><td>'+safeText(new Date(r.created_at).toLocaleString())+'</td><td>'+safeText(r.refund_method.replace('_',' '))+'</td><td>'+money(Number(r.refund_amount||0))+'</td><td>'+safeText(r.reason)+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">No returns have been processed yet.</div>';
 }
 
 async function submitRepayment(){
