@@ -23,6 +23,20 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 .formrow{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:12px 0}.field label{display:block;font-size:11px;color:var(--muted);margin-bottom:6px}.field input,.field select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text)}.notice{padding:12px 14px;background:rgba(7,85,165,.08);border-radius:10px;color:var(--muted);font-size:12px;margin-bottom:16px}
 .receipt-paper{max-width:420px;margin:18px auto;background:#fff;color:#111;padding:24px;border:1px solid #ddd;font:12px Arial,sans-serif}.receipt-paper h2,.receipt-paper p{text-align:center;margin:5px 0}.receipt-paper table{margin:14px 0}.receipt-paper th,.receipt-paper td{color:#111;border-bottom:1px dashed #bbb;padding:7px 3px;font-size:11px}.receipt-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:12px 0}.receipt-logo{display:block;max-width:130px;max-height:55px;object-fit:contain;margin:0 auto 10px}.pos-tools{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:12px}.pos-tools .search{min-width:0}@media print{body *{visibility:hidden!important}#receipt-preview,#receipt-preview *{visibility:visible!important}#receipt-preview{position:absolute;left:0;top:0;width:100%;margin:0;padding:0;border:0;box-shadow:none}.receipt-actions{display:none!important}.receipt-paper{border:0;margin:0 auto;max-width:80mm;padding:4mm}}
 .toast{position:fixed;bottom:22px;right:22px;background:#14253b;color:white;padding:12px 17px;border-radius:10px;box-shadow:var(--shadow);opacity:0;transform:translateY(10px);transition:.25s;pointer-events:none;z-index:20}.toast.show{opacity:1;transform:translateY(0)}
+
+.modal-backdrop{position:fixed;inset:0;background:rgba(8,18,32,.62);backdrop-filter:blur(5px);display:none;align-items:center;justify-content:center;padding:18px;z-index:100}
+.modal-backdrop.open{display:flex}.modal-panel{width:min(620px,100%);max-height:min(90vh,820px);overflow:auto;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.28);animation:modalIn .18s ease-out}
+@keyframes modalIn{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:22px 24px 16px;border-bottom:1px solid var(--line)}
+.modal-head h2{margin:4px 0 5px;font-size:20px}.modal-head p{margin:0;color:var(--muted);font-size:12px}
+.modal-close{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:10px;width:36px;height:36px;font-size:20px}
+.modal-content{padding:20px 24px}.modal-content .formrow{margin:0 0 14px}.modal-footer{display:flex;justify-content:flex-end;gap:9px;padding:15px 24px 22px;border-top:1px solid var(--line)}
+.modal-kicker{font-size:10px;font-weight:800;letter-spacing:1.5px;color:var(--blue);text-transform:uppercase}
+.modal-stock-card{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:15px;margin-bottom:17px}
+.modal-stock-card strong{font-size:26px;display:block;margin-top:5px}
+.modal-content .field input,.modal-content .field select{padding:12px}
+@media(max-width:600px){.modal-backdrop{padding:10px;align-items:flex-end}.modal-panel{border-radius:20px 20px 12px 12px;max-height:94vh}.modal-head,.modal-content{padding-left:18px;padding-right:18px}.modal-footer{padding:14px 18px 18px}.modal-content .formrow{grid-template-columns:1fr}}
+
 .mobilemenu{display:none}
 @media(max-width:1000px){.sidebar{width:210px}.stats{grid-template-columns:repeat(2,1fr)}.grid2,.poslayout{grid-template-columns:1fr}}
 @media(max-width:680px){.app{display:block}.sidebar{position:fixed;z-index:10;left:-260px;top:0;bottom:0;width:245px;transition:.25s;box-shadow:var(--shadow)}.sidebar.open{left:0}.topbar{padding:0 15px;height:62px}.mobilemenu{display:inline-block}.content{padding:20px 14px}.heading{align-items:center}.heading h1{font-size:22px}.stats{gap:9px}.stat{padding:13px}.stat strong{font-size:21px}.productgrid{grid-template-columns:repeat(2,minmax(0,1fr))}.formrow{grid-template-columns:1fr}.userpill span:last-child{display:none}}
@@ -85,6 +99,12 @@ body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:no
 </main>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal-backdrop" id="product-modal" onclick="if(event.target===this)closeProductModal()">
+  <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+    <div class="modal-head"><div><div class="modal-kicker" id="product-modal-kicker">Inventory</div><h2 id="product-modal-title">Edit product</h2><p id="product-modal-subtitle">Update product information.</p></div><button class="modal-close" type="button" onclick="closeProductModal()" aria-label="Close">×</button></div>
+    <form id="product-modal-form"><div class="modal-content" id="product-modal-content"></div><div class="modal-footer"><button class="secondary" type="button" onclick="closeProductModal()">Cancel</button><button class="primary" type="submit" id="product-modal-save">Save changes</button></div></form>
+  </section>
+</div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const SUPABASE_URL = "https://bcgpkuenbdbhowpnikoj.supabase.co";
@@ -103,11 +123,13 @@ async function initializeApp() {
   await verifyWorkspace();
 }
 
-async function loadLiveInventory() {
-  const { data, error } = await db.from('products')
-    .select('id,product_code,barcode,product_name,category,quantity,cost_price,selling_price,low_stock_threshold')
+async function loadLiveInventory(includeArchived = false) {
+  let query = db.from('products')
+    .select('id,product_code,barcode,product_name,category,quantity,cost_price,selling_price,low_stock_threshold,is_active')
     .eq('shop_id', currentShop.id)
     .order('product_name');
+  if (!includeArchived) query = query.eq('is_active', true);
+  const { data, error } = await query;
   if (error) throw error;
   return data || [];
 }
@@ -119,13 +141,17 @@ function safeText(value) {
 }
 
 function liveInventoryMarkup(rows) {
-  if (!rows.length) return '<div class="empty">No products yet. Add your first BAJAJ spare part below.</div>';
-  return '<div class="tablecard"><table><thead><tr><th>Product</th><th>Product code</th><th>Barcode</th><th>Category</th><th>Cost price</th><th>Selling price</th><th>Quantity</th><th>Actions</th></tr></thead><tbody>' +
+  if (!rows.length) return '<div class="empty">No products found in this inventory view.</div>';
+  return '<div class="tablecard"><table><thead><tr><th>Product</th><th>Product code</th><th>Barcode</th><th>Category</th><th>Cost price</th><th>Selling price</th><th>Quantity</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
     rows.map(p => '<tr><td><b>' + safeText(p.product_name) + '</b></td><td>' + safeText(p.product_code) +
     '</td><td>' + safeText(p.barcode || '—') + '</td><td>' + safeText(p.category || '—') + '</td><td>' + money(Number(p.cost_price || 0)) +
     '</td><td><b>' + money(Number(p.selling_price || 0)) + '</b></td><td><span class="badge ' +
     (Number(p.quantity || 0) <= Number(p.low_stock_threshold ?? 5) ? 'warn' : '') + '">' + Number(p.quantity || 0) +
-    '</span></td><td><button class="secondary" onclick="editLiveProduct(\'' + safeText(p.id) + '\')">Edit details</button> <button class="secondary" onclick="adjustLiveStock(\'' + safeText(p.id) + '\')">Adjust stock</button> <button class="danger" onclick="deleteLiveProduct(\'' + safeText(p.id) + '\')">Delete</button></td></tr>').join('') +
+    '</span></td><td><span class="badge ' + (p.is_active === false ? 'warn' : '') + '">' + (p.is_active === false ? 'Archived' : 'Active') + '</span></td><td>' +
+    (p.is_active === false
+      ? '<button class="secondary" onclick="restoreLiveProduct(\'' + safeText(p.id) + '\')">Restore</button>'
+      : '<button class="secondary" onclick="editLiveProduct(\'' + safeText(p.id) + '\')">Edit</button> <button class="secondary" onclick="adjustLiveStock(\'' + safeText(p.id) + '\')">Adjust stock</button> <button class="danger" onclick="deleteLiveProduct(\'' + safeText(p.id) + '\')">Delete</button>') +
+    '</td></tr>').join('') +
     '</tbody></table></div>';
 }
 
@@ -159,55 +185,92 @@ async function addLiveProduct(event) {
   await refreshLiveInventory();
 }
 
+let activeProductModalMode = 'edit';
+let activeProductModalId = null;
+function closeProductModal() {
+  const modal = $('#product-modal');
+  if (modal) modal.classList.remove('open');
+  activeProductModalId = null;
+}
+function openProductModal(title, subtitle, kicker, content, mode, id) {
+  activeProductModalMode = mode; activeProductModalId = id;
+  $('#product-modal-title').textContent = title;
+  $('#product-modal-subtitle').textContent = subtitle;
+  $('#product-modal-kicker').textContent = kicker;
+  $('#product-modal-content').innerHTML = content;
+  $('#product-modal-save').textContent = mode === 'stock' ? 'Save stock adjustment' : 'Save changes';
+  $('#product-modal').classList.add('open');
+}
 async function editLiveProduct(id) {
-  const { data: product, error: readError } = await db.from('products').select('*').eq('id', id).eq('shop_id', currentShop.id).single();
-  if (readError) { alert('Could not load product: ' + readError.message); return; }
-  const product_code = prompt('Product code:', product.product_code || ''); if (product_code === null) return;
-  const product_name = prompt('Product name:', product.product_name || ''); if (product_name === null) return;
-  const barcode = prompt('Barcode (optional):', product.barcode || ''); if (barcode === null) return;
-  const category = prompt('Category:', product.category || ''); if (category === null) return;
-  const low_stock_threshold = prompt('Low-stock alert threshold:', product.low_stock_threshold ?? 5); if (low_stock_threshold === null) return;
-  const cost_price = prompt('Cost price (LKR):', product.cost_price ?? 0); if (cost_price === null) return;
-  const selling_price = prompt('Selling price (LKR):', product.selling_price ?? 0); if (selling_price === null) return;
-  const update = { product_code: product_code.trim(), barcode: barcode.trim() || null, product_name: product_name.trim(), category: category.trim() || null, low_stock_threshold: Number(low_stock_threshold), cost_price: Number(cost_price), selling_price: Number(selling_price) };
-  if (!update.product_code || !update.product_name || !Number.isInteger(update.low_stock_threshold) || update.low_stock_threshold < 0 || !Number.isFinite(update.cost_price) || update.cost_price < 0 || !Number.isFinite(update.selling_price) || update.selling_price < 0) { alert('Please enter valid details and non-negative prices and threshold.'); return; }
-  const { error } = await db.from('products').update(update).eq('id', id).eq('shop_id', currentShop.id);
-  if (error) { alert('Could not update product: ' + error.message); return; }
-  toast('Product details updated.'); await refreshLiveInventory();
+  const { data: p, error } = await db.from('products').select('*').eq('id',id).eq('shop_id',currentShop.id).single();
+  if(error){toast('Could not load product: '+error.message);return;}
+  openProductModal('Edit product','Update the part details and pricing for this shop.','Product details',
+    '<div class="formrow">'+
+    '<div class="field"><label>Product code</label><input name="product_code" required maxlength="80" value="'+safeText(p.product_code||'')+'"></div>'+
+    '<div class="field"><label>Product name</label><input name="product_name" required maxlength="180" value="'+safeText(p.product_name||'')+'"></div>'+
+    '<div class="field"><label>Barcode</label><input name="barcode" maxlength="120" value="'+safeText(p.barcode||'')+'"></div>'+
+    '<div class="field"><label>Category</label><input name="category" maxlength="100" value="'+safeText(p.category||'')+'"></div>'+
+    '<div class="field"><label>Cost price (LKR)</label><input name="cost_price" type="number" min="0" step="0.01" required value="'+Number(p.cost_price||0)+'"></div>'+
+    '<div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" required value="'+Number(p.selling_price||0)+'"></div>'+
+    '<div class="field"><label>Low-stock alert threshold</label><input name="low_stock_threshold" type="number" min="0" step="1" required value="'+Number(p.low_stock_threshold??5)+'"></div></div>','edit',id);
 }
-
 async function adjustLiveStock(id) {
-  const { data: product, error } = await db.from('products').select('id,product_name,quantity').eq('id', id).eq('shop_id', currentShop.id).single();
-  if (error) { alert('Could not load product: ' + error.message); return; }
-  const raw = prompt('Stock change for ' + product.product_name + ' (use + to add, - to remove):', '0');
-  if (raw === null) return;
-  const quantity_change = Number(raw);
-  if (!Number.isInteger(quantity_change) || quantity_change === 0) { alert('Enter a non-zero whole number, such as 5 or -2.'); return; }
-  const reason = prompt('Reason for this stock adjustment (required):', 'Stock count correction');
-  if (reason === null) return;
-  if (!reason.trim()) { alert('A reason is required.'); return; }
-  const { data: result, error: rpcError } = await db.rpc('adjust_stock', { p_product_id: id, p_quantity_change: quantity_change, p_reason: reason.trim() });
-  if (rpcError) { alert('Stock adjustment failed: ' + rpcError.message); return; }
-  toast('Stock adjusted. New quantity: ' + (result?.new_quantity ?? 'updated'));
-  await refreshLiveInventory();
+  const {data:p,error}=await db.from('products').select('id,product_name,quantity').eq('id',id).eq('shop_id',currentShop.id).single();
+  if(error){toast('Could not load product: '+error.message);return;}
+  openProductModal('Adjust stock','Record a stock-in or stock-out movement with a reason.','Stock control',
+    '<div class="modal-stock-card"><span class="muted">Current available stock</span><strong>'+Number(p.quantity||0)+' units</strong><span class="muted">'+safeText(p.product_name)+'</span></div>'+
+    '<div class="formrow"><div class="field"><label>Adjustment</label><select name="direction"><option value="add">Add stock</option><option value="remove">Remove stock</option></select></div>'+
+    '<div class="field"><label>Quantity</label><input name="amount" type="number" min="1" step="1" required placeholder="e.g. 5"></div></div>'+
+    '<div class="field"><label>Reason</label><input name="reason" required maxlength="250" value="Stock count correction" placeholder="Why is stock changing?"></div>','stock',id);
 }
-
+async function restoreLiveProduct(id) {
+  const {error}=await db.from('products').update({is_active:true}).eq('id',id).eq('shop_id',currentShop.id);
+  if(error){toast('Could not restore product: '+error.message);return;}
+  toast('Product restored to active inventory.'); await refreshLiveInventory();
+}
 async function deleteLiveProduct(id) {
-  if (!confirm('Delete this product? This cannot be undone.')) return;
-  const { error } = await db.from('products').delete().eq('id', id).eq('shop_id', currentShop.id);
-  if (error) { alert('Could not delete product: ' + error.message); return; }
-  await refreshLiveInventory();
+  const p=cachedLiveInventory.find(x=>String(x.id)===String(id)),label=p?.product_name||'this product';
+  if(!confirm('Remove "'+label+'" from active inventory? If it has sales or stock history, it will be archived so reports remain intact.'))return;
+  const {data:deleted,error}=await db.from('products').delete().eq('id',id).eq('shop_id',currentShop.id).select('id');
+  if(!error&&deleted?.length){toast('Product permanently deleted.');await refreshLiveInventory();return;}
+  const historyConstraint=error&&(error.code==='23503'||/foreign key|referenced from table/i.test(error.message||''));
+  if(!historyConstraint){toast('Could not delete product: '+(error?.message||'No delete permission for this account.'));return;}
+  const {error:archiveError}=await db.from('products').update({is_active:false}).eq('id',id).eq('shop_id',currentShop.id);
+  if(archiveError){toast('Could not archive product: '+archiveError.message);return;}
+  toast('Product archived. Its old sales and reports are preserved.');await refreshLiveInventory();
 }
+$('#product-modal-form').addEventListener('submit',async event=>{
+  event.preventDefault();const form=event.currentTarget,button=$('#product-modal-save');
+  const v=Object.fromEntries(new FormData(form).entries());button.disabled=true;
+  try{
+    if(activeProductModalMode==='stock'){
+      const amount=Number(v.amount);
+      if(!Number.isInteger(amount)||amount<1||!String(v.reason||'').trim()){toast('Enter a whole-number quantity and a reason.');return;}
+      const change=v.direction==='remove'?-amount:amount;
+      const {data,error}=await db.rpc('adjust_stock',{p_product_id:activeProductModalId,p_quantity_change:change,p_reason:String(v.reason).trim()});
+      if(error)throw error;
+      closeProductModal();toast('Stock adjusted. New quantity: '+(data?.new_quantity??'updated'));
+    }else{
+      const update={product_code:String(v.product_code||'').trim(),product_name:String(v.product_name||'').trim(),barcode:String(v.barcode||'').trim()||null,category:String(v.category||'').trim()||null,cost_price:Number(v.cost_price),selling_price:Number(v.selling_price),low_stock_threshold:Number(v.low_stock_threshold)};
+      if(!update.product_code||!update.product_name||!Number.isFinite(update.cost_price)||update.cost_price<0||!Number.isFinite(update.selling_price)||update.selling_price<0||!Number.isInteger(update.low_stock_threshold)||update.low_stock_threshold<0){toast('Check product details and enter valid non-negative values.');return;}
+      const {error}=await db.from('products').update(update).eq('id',activeProductModalId).eq('shop_id',currentShop.id);
+      if(error)throw error;closeProductModal();toast('Product details updated.');
+    }
+    await refreshLiveInventory();
+  }catch(error){toast('Could not save: '+error.message);}
+  finally{button.disabled=false;}
+});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')closeProductModal();});
 
 async function refreshLiveInventory() {
   const target = document.querySelector('#live-inventory');
   if (!target) return;
   target.innerHTML = '<p class="muted">Loading live inventory…</p>';
   try {
-    const rows = await loadLiveInventory();
+    const rows = await loadLiveInventory(showArchivedInventory);
     cachedLiveInventory = rows;
     target.innerHTML = liveInventoryMarkup(rows);
-    const low = rows.filter(p => Number(p.quantity || 0) <= Number(p.low_stock_threshold ?? 5));
+    const low = rows.filter(p => p.is_active !== false && Number(p.quantity || 0) <= Number(p.low_stock_threshold ?? 5));
     const lowHost = document.querySelector('#live-low-stock');
     if (lowHost) lowHost.innerHTML = low.length ? '<div class="notice"><b>' + low.length + ' low-stock product(s).</b> ' + low.slice(0,5).map(p => safeText(p.product_name) + ' (' + Number(p.quantity||0) + ')').join(' · ') + (low.length>5?' · and more':'') + '</div>' : '<div class="notice">All products are above their low-stock thresholds.</div>';
     const count = document.querySelector('#live-product-count');
@@ -421,12 +484,14 @@ async function inventory(){
   '<div class="field"><label>Selling price (LKR)</label><input name="selling_price" type="number" min="0" step="0.01" value="0" required></div>'+
   '<button class="primary" type="submit">＋ Save product</button></form><div id="product-form-message" class="muted"></div></div>'+
   '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Bulk inventory tools</h3><span>CSV import / export</span></div><p class="muted">Download a template, edit it in a spreadsheet, then import. Quantities are recorded through the stock adjustment ledger.</p><div class="toolbar"><button class="secondary" onclick="downloadInventoryTemplate()">Download CSV template</button><button class="secondary" onclick="exportInventoryCSV()">Export current inventory</button><label class="secondary" style="padding:10px 14px;cursor:pointer">Choose CSV file<input type="file" accept=".csv,text/csv" style="display:none" onchange="previewInventoryCSV(event)"></label></div><div id="inventory-import-message" class="muted"></div><div id="inventory-import-preview"></div></div>' +
-  '<div class="toolbar"><input class="search" id="inventory-search-live" placeholder="Search product, code or category…" oninput="filterLiveInventory()"><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div>'+
+  '<div class="toolbar"><input class="search" id="inventory-search-live" placeholder="Search product, code or category…" oninput="filterLiveInventory()"><button class="secondary" id="archive-toggle" onclick="toggleArchivedInventory()">Show archived</button><button class="secondary" onclick="refreshLiveInventory()">↻ Refresh</button></div>'+
   '<div class="card"><div class="cardhead"><h3>Live inventory</h3><span id="live-product-count">Loading…</span></div><div id="live-low-stock"></div><div id="live-inventory">Loading inventory…</div></div>';
   await refreshLiveInventory();
   $('#product-form').addEventListener('submit',addLiveProduct);
 }
 let cachedLiveInventory=[];
+let showArchivedInventory=false;
+async function toggleArchivedInventory(){showArchivedInventory=!showArchivedInventory;const b=$('#archive-toggle');if(b)b.textContent=showArchivedInventory?'Hide archived':'Show archived';await refreshLiveInventory();}
 function filterLiveInventory(){
   const q=($('#inventory-search-live')?.value||'').trim().toLowerCase();
   const rows=cachedLiveInventory.filter(p=>(String(p.product_name||'')+' '+String(p.product_code||'')+' '+String(p.category||'')).toLowerCase().includes(q));
