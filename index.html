@@ -714,12 +714,28 @@ async function showSupplierTab(tab){
     root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Create purchase order</h3><span>Stock is added only when received</span></div><div class="formrow"><div class="field"><label>Supplier</label><select id="po-supplier"><option value="">Choose supplier</option>'+liveSuppliers.filter(x=>x.is_active!==false).map(x=>'<option value="'+safeText(x.id)+'">'+safeText(x.name)+'</option>').join('')+'</select></div><div class="field"><label>Reference / invoice number</label><input id="po-reference" maxlength="100" placeholder="Supplier invoice number"></div></div><div id="purchase-lines"></div><div class="toolbar"><button class="secondary" onclick="addPurchaseLine()">＋ Add product line</button></div><div class="totalrow final"><span>Purchase total</span><b id="purchase-total">LKR 0.00</b></div><div class="field"><label>Notes</label><input id="po-notes" maxlength="500" placeholder="Optional notes"></div><button class="primary" onclick="createPurchaseOrder()">Save purchase order</button><div id="purchase-message" class="muted" style="margin-top:10px"></div></div><div class="card"><div class="cardhead"><h3>Purchase history</h3><span>'+purchaseOrders.length+' orders</span></div>'+(purchaseOrders.length?'<div class="tablecard"><table><thead><tr><th>Reference</th><th>Supplier</th><th>Date</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>'+purchaseOrders.map(p=>{const sup=liveSuppliers.find(x=>String(x.id)===String(p.supplier_id));return '<tr><td><b>'+safeText(p.reference_no||String(p.id).slice(0,8))+'</b></td><td>'+safeText(sup?.name||'Supplier')+'</td><td>'+new Date(p.created_at).toLocaleDateString()+'</td><td>'+money(Number(p.subtotal||0))+'</td><td><span class="badge '+(p.status==='received'?'':'warn')+'">'+safeText(p.status)+'</span></td><td>'+(p.status==='draft'||p.status==='ordered'?'<button class="primary" onclick="receivePurchase(\''+safeText(p.id)+'\')">Receive stock</button>':'—')+'</td></tr>';}).join('')+'</tbody></table></div>':'<div class="empty">No purchase orders yet.</div>')+'</div>';
     purchaseLines=[];addPurchaseLine();
   }else{
-    root.innerHTML='<div class="card"><div class="cardhead"><h3>Recent stock movements</h3><button class="secondary" onclick="showSupplierTab(\'movements\')">↻ Refresh</button></div><div id="movement-list">Loading movements…</div></div>';
-    const {data,error}=await db.from('inventory_movements').select('*').eq('shop_id',currentShop.id).order('created_at',{ascending:false}).limit(100);
-    const el=$('#movement-list');if(error){el.innerHTML='<div class="notice">Could not load movements: '+safeText(error.message)+'</div>';return;}
-    const productsNow=await loadLiveInventory();
-    el.innerHTML=data?.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Product</th><th>Movement</th><th>Quantity change</th><th>Notes</th></tr></thead><tbody>'+data.map(m=>'<tr><td>'+new Date(m.created_at).toLocaleString()+'</td><td>'+safeText(productsNow.find(p=>p.id===m.product_id)?.product_name||m.product_id)+'</td><td>'+safeText(m.movement_type)+'</td><td>'+(Number(m.quantity_change)>0?'+':'')+Number(m.quantity_change)+'</td><td>'+safeText(m.notes||'—')+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No stock movements recorded yet.</div>';
+    const today=localDateInputValue(),monthAgo=localDateInputValue(new Date(Date.now()-29*86400000));
+    root.innerHTML='<div class="card"><div class="cardhead"><h3>Stock movement report</h3><span>Filter and export inventory history</span></div><div class="formrow"><div class="field"><label>From</label><input id="movement-from" type="date" value="'+monthAgo+'"></div><div class="field"><label>To</label><input id="movement-to" type="date" value="'+today+'"></div><button class="primary" onclick="loadStockMovementReport()">Apply dates</button><button class="secondary" onclick="exportStockMovementReport()">Export CSV</button></div><div id="movement-list">Loading movements…</div></div>';
+    await loadStockMovementReport();
   }
+}
+let cachedStockMovements=[];
+async function loadStockMovementReport(){
+  const el=$('#movement-list');if(!el)return;
+  const from=$('#movement-from')?.value,to=$('#movement-to')?.value;
+  if(!from||!to||from>to){el.innerHTML='<div class="notice">Choose a valid date range.</div>';return;}
+  const start=new Date(from+'T00:00:00').toISOString(),end=new Date(new Date(to+'T00:00:00').getTime()+86400000).toISOString();
+  el.innerHTML='<p class="muted">Loading movement history…</p>';
+  const [{data,error},productsNow]=await Promise.all([db.from('inventory_movements').select('*').eq('shop_id',currentShop.id).gte('created_at',start).lt('created_at',end).order('created_at',{ascending:false}).limit(1000),loadLiveInventory()]);
+  if(error){el.innerHTML='<div class="notice">Could not load movements: '+safeText(error.message)+'</div>';return;}
+  cachedStockMovements=data||[];
+  const total=cachedStockMovements.reduce((n,m)=>n+Number(m.quantity_change||0),0);
+  el.innerHTML='<div class="stats"><div class="stat"><div class="stathead">Movement records</div><strong>'+cachedStockMovements.length+'</strong></div><div class="stat"><div class="stathead">Net quantity change</div><strong>'+ (total>0?'+':'')+total+'</strong></div></div>'+
+  (cachedStockMovements.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Product</th><th>Movement</th><th>Quantity change</th><th>Notes</th></tr></thead><tbody>'+cachedStockMovements.map(m=>'<tr><td>'+new Date(m.created_at).toLocaleString()+'</td><td>'+safeText(productsNow.find(p=>p.id===m.product_id)?.product_name||m.product_id)+'</td><td>'+safeText(m.movement_type)+'</td><td>'+(Number(m.quantity_change)>0?'+':'')+Number(m.quantity_change)+'</td><td>'+safeText(m.notes||'—')+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No stock movements in this date range.</div>');
+}
+function exportStockMovementReport(){
+  if(!cachedStockMovements.length){toast('There are no movement records to export.');return;}
+  downloadCSV('bajaj-stock-movements.csv',[['date','product_id','movement_type','quantity_change','notes'],...cachedStockMovements.map(m=>[m.created_at,m.product_id,m.movement_type,m.quantity_change,m.notes||''])]);
 }
 async function saveSupplier(e){
   e.preventDefault();const f=e.currentTarget,v=Object.fromEntries(new FormData(f).entries()),msg=$('#supplier-message');
