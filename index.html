@@ -330,7 +330,7 @@ async function notificationsPage(){
   const activeOverdueSales=overdueSales.filter(s=>Number(s.total||0)-Number(s.returned_amount||0)-(paidBySale.get(s.id)||0)>0);
   const notes=notesResult.data||[];
   const unread=notes.filter(n=>!n.read_at).length;
-  const noteRows=notes.length?notes.map(n=>'<div class="cartline"><div style="flex:1"><b>'+safeText(n.title)+'</b><div class="muted">'+safeText(n.message)+'</div><small class="muted">'+safeText(new Date(n.created_at).toLocaleString())+'</small></div><div>'+(!n.read_at?'<button class="secondary" onclick="markNotificationRead(\\''+safeText(n.id)+'\\')">Mark read</button>':'<span class="badge">Read</span>')+'</div></div>').join(''):'<div class="empty">No active stock alerts. You’re all caught up.</div>';
+  const noteRows=notes.length?notes.map(n=>'<div class="cartline"><div style="flex:1"><b>'+safeText(n.title)+'</b><div class="muted">'+safeText(n.message)+'</div><small class="muted">'+safeText(new Date(n.created_at).toLocaleString())+'</small></div><div>'+(!n.read_at?'<button class="secondary" onclick="markNotificationRead(\''+safeText(n.id)+'\')">Mark read</button>':'<span class="badge">Read</span>')+'</div></div>').join(''):'<div class="empty">No active stock alerts. You’re all caught up.</div>';
   const pendingRows=pendingSales.length?pendingSales.map(s=>{
     const customer=customerById.get(s.customer_id);
     return '<div class="cartline"><div><b>'+safeText(s.receipt_no||String(s.id).slice(0,8))+'</b><div class="muted">'+safeText(customer?.name||'Customer not linked')+' · '+safeText(s.sold_at?new Date(s.sold_at).toLocaleDateString():'')+'</div></div><b>'+money(Number(s.total||0))+'</b></div>';
@@ -348,7 +348,7 @@ async function notificationsPage(){
     '<div class="stat"><div class="stathead">Overdue credit sales</div><strong>'+activeOverdueSales.length+'</strong><small>Older than '+overdueDays+' days</small></div>'+
     '<div class="stat"><div class="stathead">Outstanding overdue</div><strong>'+money(activeOverdueSales.reduce((sum,s)=>sum+Math.max(0,Number(s.total||0)-Number(s.returned_amount||0)-(paidBySale.get(s.id)||0)),0))+'</strong><small>After repayments and returns</small></div></div>'+
     '<div class="grid2"><div class="card"><div class="cardhead"><h3>Stock alerts</h3><span>'+notes.length+' active</span></div>'+noteRows+'</div>'+
-    '<div class="card"><div class="cardhead"><h3>Pending credit approvals</h3><button class="secondary" onclick="page(\\'sales\\')">Review sales →</button></div>'+pendingRows+'</div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Pending credit approvals</h3><button class="secondary" onclick="page(\'sales\')">Review sales →</button></div>'+pendingRows+'</div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Overdue customer credit</h3><span>30+ days outstanding</span></div>'+ (overdueRows||'<div class="empty">No overdue credit balances found.</div>') +'</div>';
   await loadNotificationBadge();
 }
@@ -1159,7 +1159,7 @@ function filterExpenses(){
   const byCategory=new Map();rows.forEach(x=>byCategory.set(x.category,(byCategory.get(x.category)||0)+Number(x.amount||0)));
   host.innerHTML='<div class="stats"><div class="stat"><div class="stathead">Total expenses</div><strong>'+money(total)+'</strong><small>'+rows.length+' records in selected range</small></div><div class="stat"><div class="stathead">Average expense</div><strong>'+money(rows.length?total/rows.length:0)+'</strong><small>Per recorded expense</small></div><div class="stat"><div class="stathead">Categories used</div><strong>'+byCategory.size+'</strong><small>Expense categories</small></div></div>'+
     (rows.length?'<div class="tablecard"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Payment</th><th>Reference</th><th>Amount</th><th>Actions</th></tr></thead><tbody>'+
-    rows.map(x=>'<tr><td>'+safeText(x.expense_date)+'</td><td><span class="badge">'+safeText(x.category)+'</span></td><td><b>'+safeText(x.description)+'</b><div class="muted">'+safeText(x.notes||'')+'</div></td><td>'+safeText(x.payment_method)+'</td><td>'+safeText(x.reference||'—')+'</td><td><b>'+money(x.amount)+'</b></td><td><button class="secondary" onclick="editExpense(\\''+safeText(x.id)+'\\')">Edit</button> <button class="danger" onclick="deleteExpense(\\''+safeText(x.id)+'\\')">Delete</button></td></tr>').join('')+
+    rows.map(x=>'<tr><td>'+safeText(x.expense_date)+'</td><td><span class="badge">'+safeText(x.category)+'</span></td><td><b>'+safeText(x.description)+'</b><div class="muted">'+safeText(x.notes||'')+'</div></td><td>'+safeText(x.payment_method)+'</td><td>'+safeText(x.reference||'—')+'</td><td><b>'+money(x.amount)+'</b></td><td><button class="secondary" onclick="editExpense(\''+safeText(x.id)+'\')">Edit</button> <button class="danger" onclick="deleteExpense(\''+safeText(x.id)+'\')">Delete</button></td></tr>').join('')+
     '</tbody></table></div>':'<div class="empty">No expenses match this date range.</div>')+
     (byCategory.size?'<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Spending by category</h3></div>'+[...byCategory.entries()].sort((a,b)=>b[1]-a[1]).map(([name,value])=>'<div class="cartline"><span>'+safeText(name)+'</span><b>'+money(value)+'</b></div>').join('')+'</div>':'');
 }
