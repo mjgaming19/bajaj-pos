@@ -909,7 +909,7 @@ async function loadProfitReport(){
   const msg=$('#profit-range-message');
   if(!from||!to||from>to){if(msg)msg.textContent='Choose a valid date range.';return;}
   if(msg)msg.textContent='Loading sales and product analytics…';
-  const start=from+'T00:00:00.000Z',end=new Date(new Date(to+'T00:00:00.000Z').getTime()+86400000).toISOString();
+  const start=new Date(from+'T00:00:00').toISOString(),end=new Date(new Date(to+'T00:00:00').getTime()+86400000).toISOString();
   const [salesResult,itemsResult,productsResult]=await Promise.all([
     db.from('sales').select('id,total,subtotal,discount,status,sold_at,payment_method,payment_status').eq('shop_id',currentShop.id).eq('status','completed').gte('sold_at',start).lt('sold_at',end).order('sold_at',{ascending:false}),
     db.from('sale_items').select('sale_id,product_id,product_name,product_code,quantity,unit_price,unit_cost,line_total,sales!inner(shop_id,status,sold_at)').eq('sales.shop_id',currentShop.id).eq('sales.status','completed').gte('sales.sold_at',start).lt('sales.sold_at',end),
