@@ -1208,15 +1208,16 @@ async function loadProfitReport(){
   if(!from||!to||from>to){if(msg)msg.textContent='Choose a valid date range.';return;}
   if(msg)msg.textContent='Loading sales and product analytics…';
   const start=new Date(from+'T00:00:00').toISOString(),end=new Date(new Date(to+'T00:00:00').getTime()+86400000).toISOString();
-  const [salesResult,itemsResult,productsResult,returnsResult,returnItemsResult]=await Promise.all([
+  const [salesResult,itemsResult,productsResult,returnsResult,returnItemsResult,expensesResult]=await Promise.all([
     db.from('sales').select('id,total,subtotal,discount,status,sold_at,payment_method,payment_status').eq('shop_id',currentShop.id).eq('status','completed').gte('sold_at',start).lt('sold_at',end).order('sold_at',{ascending:false}),
     db.from('sale_items').select('sale_id,product_id,product_name,product_code,quantity,unit_price,unit_cost,line_total,sales!inner(shop_id,status,sold_at)').eq('sales.shop_id',currentShop.id).eq('sales.status','completed').gte('sales.sold_at',start).lt('sales.sold_at',end),
     loadLiveInventory(),
     db.from('sale_returns').select('id,sale_id,refund_amount,created_at').eq('shop_id',currentShop.id).gte('created_at',start).lt('created_at',end),
-    db.from('sale_return_items').select('return_id,product_id,quantity,unit_refund_amount,restocked,sale_returns!inner(shop_id,created_at),sale_items!inner(unit_cost)').gte('sale_returns.created_at',start).lt('sale_returns.created_at',end).eq('sale_returns.shop_id',currentShop.id)
+    db.from('sale_return_items').select('return_id,product_id,quantity,unit_refund_amount,restocked,sale_returns!inner(shop_id,created_at),sale_items!inner(unit_cost)').gte('sale_returns.created_at',start).lt('sale_returns.created_at',end).eq('sale_returns.shop_id',currentShop.id),
+    db.from('expenses').select('id,category,description,amount,expense_date,payment_method').eq('shop_id',currentShop.id).gte('expense_date',from).lte('expense_date',to).order('expense_date',{ascending:false})
   ]);
-  if(salesResult.error||itemsResult.error||returnsResult.error||returnItemsResult.error){host.innerHTML='<div class="notice">Could not load analytics: '+safeText(salesResult.error?.message||itemsResult.error?.message||returnsResult.error?.message||returnItemsResult.error?.message)+'</div>';if(msg)msg.textContent='Report could not be loaded.';return;}
-  const sales=salesResult.data||[],items=itemsResult.data||[],products=productsResult||[],returns=returnsResult.data||[],returnItems=returnItemsResult.data||[];
+  if(salesResult.error||itemsResult.error||returnsResult.error||returnItemsResult.error||expensesResult.error){host.innerHTML='<div class="notice">Could not load analytics: '+safeText(salesResult.error?.message||itemsResult.error?.message||returnsResult.error?.message||returnItemsResult.error?.message||expensesResult.error?.message)+'</div>';if(msg)msg.textContent='Report could not be loaded.';return;}
+  const sales=salesResult.data||[],items=itemsResult.data||[],products=productsResult||[],returns=returnsResult.data||[],returnItems=returnItemsResult.data||[],expenses=expensesResult.data||[];
   const saleById=new Map(sales.map(s=>[s.id,s]));
   const validItems=items.filter(i=>saleById.has(i.sale_id));
   const missingCosts=validItems.filter(i=>i.unit_cost===null||i.unit_cost===undefined);
@@ -1274,6 +1275,8 @@ async function loadProfitReport(){
   costOfGoods=costOfGoods-returnedCost;
   const revenue=sales.reduce((sum,s)=>sum+Number(s.total||0),0)-totalRefunds;
   const grossProfit=revenue-costOfGoods;
+  const totalExpenses=expenses.reduce((sum,x)=>sum+Number(x.amount||0),0);
+  const netProfit=grossProfit-totalExpenses;
   const margin=revenue>0?(grossProfit/revenue)*100:0;
   const stockValue=products.reduce((sum,p)=>sum+Number(p.quantity||0)*Number(p.cost_price||0),0);
   const low=products.filter(p=>Number(p.quantity||0)<=Number(p.low_stock_threshold??5));
@@ -1292,9 +1295,11 @@ async function loadProfitReport(){
     '<div class="stat"><div class="stathead">Sales after discounts</div><strong>'+money(revenue)+'</strong><small class="muted">'+sales.length+' completed transactions</small></div>'+
     '<div class="stat"><div class="stathead">Cost of goods sold</div><strong>'+money(costOfGoods)+'</strong><small class="muted">Sale-time unit costs</small></div>'+
     '<div class="stat"><div class="stathead">Gross profit</div><strong>'+money(grossProfit)+'</strong><small class="muted">'+margin.toFixed(1)+'% gross margin</small></div>'+
+    '<div class="stat"><div class="stathead">Shop expenses</div><strong>'+money(totalExpenses)+'</strong><small class="muted">Selected date range</small></div>'+
+    '<div class="stat"><div class="stathead">Net profit</div><strong>'+money(netProfit)+'</strong><small class="muted">After recorded expenses</small></div>'+
     '<div class="stat"><div class="stathead">Current stock value</div><strong>'+money(stockValue)+'</strong><small class="muted">'+products.length+' products · '+low.length+' low stock</small></div></div>'+
     '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment method breakdown</h3><span>Selected period</span></div><table><thead><tr><th>Method</th><th>Transactions</th><th>Sales value</th></tr></thead><tbody>'+methods.map(m=>'<tr><td>'+safeText(m.method.toUpperCase())+'</td><td>'+m.count+'</td><td>'+money(m.value)+'</td></tr>').join('')+'</tbody></table></div>'+
-    '<div class="card"><div class="cardhead"><h3>Profit calculation</h3></div><div class="cartline"><span>Sales after discounts</span><b>'+money(revenue)+'</b></div><div class="cartline"><span>Less: cost of goods sold</span><b>'+money(costOfGoods)+'</b></div><div class="cartline"><strong>Gross profit</strong><strong>'+money(grossProfit)+'</strong></div><p class="muted">'+pendingNote+'</p></div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Profit calculation</h3></div><div class="cartline"><span>Sales after discounts</span><b>'+money(revenue)+'</b></div><div class="cartline"><span>Less: cost of goods sold</span><b>'+money(costOfGoods)+'</b></div><div class="cartline"><strong>Gross profit</strong><strong>'+money(grossProfit)+'</strong></div><div class="cartline"><span>Less: shop expenses</span><b>'+money(totalExpenses)+'</b></div><div class="cartline"><strong>Net profit</strong><strong>'+money(netProfit)+'</strong></div><p class="muted">'+pendingNote+'</p></div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Sales trend · daily</h3><span>Last 14 days in selected range</span></div>'+(daily.length?'<div class="chart">'+trendBars+'</div>':'<div class="empty">No sales in this period.</div>')+'</div>'+
     '<div class="grid2" style="margin-top:16px"><div class="card"><div class="cardhead"><h3>Top sellers by quantity</h3><span>Top 10</span></div>'+productRows(topUnits)+'</div><div class="card"><div class="cardhead"><h3>Most profitable products</h3><span>Top 10 by gross profit</span></div>'+productRows(topProfit)+'</div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Monthly performance</h3><span>Up to 12 months in selected range</span></div>'+(monthly.length?'<div class="tablecard"><table><thead><tr><th>Month</th><th>Net sales</th><th>COGS</th><th>Gross profit</th><th>Transactions</th></tr></thead><tbody>'+monthly.map(x=>'<tr><td>'+safeText(x.month)+'</td><td>'+money(x.revenue)+'</td><td>'+money(x.cost)+'</td><td><b>'+money(x.profit)+'</b></td><td>'+x.transactions.size+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No monthly data yet.</div>')+'</div>'+
@@ -1302,10 +1307,12 @@ async function loadProfitReport(){
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Daily cashier & cash summary</h3><input id="cashier-report-date" type="date" value="'+localDateInputValue()+'" onchange="loadCashierPerformance()"></div><div id="cashier-performance-content"><p class="muted">Loading cashier report…</p></div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Export analytics</h3><button class="secondary" id="export-analytics">Download CSV</button></div><p class="muted">Exports product profitability, daily sales/profit and monthly performance for the selected date range.</p></div>';
   $('#export-analytics').addEventListener('click',()=>{
-    const rows=[['Section','Name / Date','Product code','Units','Net sales','Cost of goods','Gross profit','Transactions']];
+    const rows=[['Section','Name / Date','Category / Product code','Units','Net sales','Cost / Expense','Gross profit / Net profit','Transactions']];
     for(const p of productMap.values())rows.push(['Product',p.name,p.code,p.units,p.revenue,p.cost,p.profit,'']);
     for(const d of daily)rows.push(['Daily',d.date,'','',d.revenue,d.cost,d.profit,d.transactions.size]);
     for(const m of monthly)rows.push(['Monthly',m.month,'','',m.revenue,m.cost,m.profit,m.transactions.size]);
+    for(const e of expenses)rows.push(['Expense',e.description,e.category,'','',e.amount,'','']);
+    rows.push(['Summary','Net profit','','',revenue,totalExpenses,netProfit,'']);
     const csv=rows.map(row=>row.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
     const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
     const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='bajaj-analytics-'+from+'-to-'+to+'.csv';a.click();URL.revokeObjectURL(url);
