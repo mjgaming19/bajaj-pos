@@ -1193,8 +1193,8 @@ function exportExpensesCSV(){
 async function reportsPage(){
   const today=localDateInputValue();
   const monthStart=today.slice(0,8)+'01';
-  $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Sales, cost of goods and gross profit from saved transaction snapshots.')+
-  '<div class="notice">Gross profit uses each sale item’s recorded unit cost at the time of sale. It does not use today’s product cost, so later supplier price changes will not rewrite historical profit. Voided and pending sales are excluded.</div>'+
+  $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Sales, cost of goods, shop expenses and net profit from saved transactions.')+
+  '<div class="notice">Gross profit uses each sale item’s recorded unit cost at the time of sale. Net profit then subtracts recorded shop expenses in the selected date range. Voided and pending sales are excluded.</div>'+
   '<div class="card" style="margin-bottom:16px"><div class="toolbar" style="align-items:end;margin:0"><div class="field"><label>From</label><input id="profit-from" type="date" value="'+monthStart+'"></div><div class="field"><label>To</label><input id="profit-to" type="date" value="'+today+'"></div><button class="primary" id="profit-refresh">Apply date range</button></div><div id="profit-range-message" class="muted" style="margin-top:8px"></div></div>'+
   '<div id="live-report-content"><p class="muted">Calculating live reports…</p></div>';
   $('#profit-refresh').addEventListener('click',loadProfitReport);
