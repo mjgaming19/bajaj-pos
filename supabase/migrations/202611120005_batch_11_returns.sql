@@ -1131,3 +1131,60 @@ $function$
 ;
 revoke all on function public.process_sale_return(uuid,jsonb,text,text,boolean) from public,anon;
 grant execute on function public.process_sale_return(uuid,jsonb,text,text,boolean) to authenticated;
+
+
+-- Credit repayment balance also nets cash/card refunds previously paid back.
+CREATE OR REPLACE FUNCTION public.record_repayment(p_sale_id uuid, p_amount numeric, p_method text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_sale public.sales%rowtype;
+  v_paid numeric(12,2);
+  v_remaining numeric(12,2);
+  v_status text;
+begin
+  if auth.uid() is null then raise exception 'Authentication required'; end if;
+  select * into v_sale from public.sales where id=p_sale_id for update;
+  if not found then raise exception 'Sale not found'; end if;
+  if not public.has_shop_role(v_sale.shop_id,array['sub_admin']) then
+    raise exception 'Only a shop admin or platform admin can record repayments';
+  end if;
+  if v_sale.status <> 'completed' or v_sale.payment_method <> 'credit' then
+    raise exception 'This is not an approved credit sale';
+  end if;
+  if p_amount is null or p_amount <= 0 then raise exception 'Enter a valid repayment amount'; end if;
+  if p_method not in ('cash','card','other') then raise exception 'Invalid repayment method'; end if;
+
+  select coalesce(sum(amount),0) into v_paid from public.payments where sale_id=p_sale_id;
+  v_paid := v_paid - coalesce((select sum(refund_amount) from public.sale_returns
+    where sale_id=p_sale_id and refund_method in ('cash','card')),0);
+  v_remaining := greatest(v_sale.total-coalesce(v_sale.returned_amount,0)-v_paid,0);
+  if p_amount > v_remaining then raise exception 'Repayment exceeds the outstanding balance'; end if;
+
+  insert into public.payments(shop_id,sale_id,amount,method,received_by)
+  values(v_sale.shop_id,p_sale_id,p_amount,p_method,auth.uid());
+
+  v_paid := v_paid+p_amount;
+  if v_paid >= v_sale.total-coalesce(v_sale.returned_amount,0) then
+    v_status := 'paid';
+  elsif v_paid > 0 then v_status := 'partial';
+  else v_status := 'unpaid'; end if;
+
+  update public.sales set payment_status=v_status where id=p_sale_id;
+  insert into public.audit_logs(shop_id,user_id,action,details)
+  values(v_sale.shop_id,auth.uid(),'credit_repayment',jsonb_build_object(
+    'sale_id',p_sale_id,'amount',p_amount,'payment_status',v_status
+  ));
+  return jsonb_build_object(
+    'sale_id',p_sale_id,'amount_paid',v_paid,
+    'remaining',greatest(v_sale.total-coalesce(v_sale.returned_amount,0)-v_paid,0),
+    'payment_status',v_status
+  );
+end;
+$function$
+;
+revoke all on function public.record_repayment(uuid,numeric,text) from public,anon;
+grant execute on function public.record_repayment(uuid,numeric,text) to authenticated;
