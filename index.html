@@ -893,39 +893,59 @@ async function loadCashierPerformance(){
 }
 
 async function reportsPage(){
-  $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Figures are calculated from BAJAJ transactions and current inventory.')+
-  '<div class="notice">Sales value includes completed sales (including approved credit sales). Pending credit requests are excluded. Profit is not shown until cost-at-sale is recorded reliably.</div>'+
+  const today=localDateInputValue();
+  const monthStart=today.slice(0,8)+'01';
+  $('#view').innerHTML=heading('BUSINESS INSIGHTS','Live reports','Sales, cost of goods and gross profit from saved transaction snapshots.')+
+  '<div class="notice">Gross profit uses each sale item’s recorded unit cost at the time of sale. It does not use today’s product cost, so later supplier price changes will not rewrite historical profit. Voided and pending sales are excluded.</div>'+
+  '<div class="card" style="margin-bottom:16px"><div class="toolbar" style="align-items:end;margin:0"><div class="field"><label>From</label><input id="profit-from" type="date" value="'+monthStart+'"></div><div class="field"><label>To</label><input id="profit-to" type="date" value="'+today+'"></div><button class="primary" id="profit-refresh">Apply date range</button></div><div id="profit-range-message" class="muted" style="margin-top:8px"></div></div>'+
   '<div id="live-report-content"><p class="muted">Calculating live reports…</p></div>';
-  const [salesResult,productsResult]=await Promise.all([
-    db.from('sales').select('id,total,status,sold_at,payment_method,payment_status').eq('shop_id',currentShop.id),
+  $('#profit-refresh').addEventListener('click',loadProfitReport);
+  await loadProfitReport();
+  await loadCashierPerformance();
+}
+async function loadProfitReport(){
+  const host=$('#live-report-content');if(!host)return;
+  const from=$('#profit-from')?.value||'',to=$('#profit-to')?.value||'';
+  const msg=$('#profit-range-message');
+  if(!from||!to||from>to){if(msg)msg.textContent='Choose a valid date range.';return;}
+  if(msg)msg.textContent='Loading report…';
+  const start=from+'T00:00:00.000Z',end=new Date(new Date(to+'T00:00:00.000Z').getTime()+86400000).toISOString();
+  const [salesResult,itemsResult,productsResult]=await Promise.all([
+    db.from('sales').select('id,total,status,sold_at,payment_method,payment_status,discount').eq('shop_id',currentShop.id).eq('status','completed').gte('sold_at',start).lt('sold_at',end).order('sold_at',{ascending:false}),
+    db.from('sale_items').select('sale_id,quantity,unit_cost,line_total,sales!inner(shop_id,status,sold_at)').eq('sales.shop_id',currentShop.id).eq('sales.status','completed').gte('sales.sold_at',start).lt('sales.sold_at',end),
     loadLiveInventory()
   ]);
-  const host=$('#live-report-content');if(!host)return;
-  if(salesResult.error){host.innerHTML='<div class="notice">Could not load sales reports: '+safeText(salesResult.error.message)+'</div>';return;}
-  const sales=salesResult.data||[],products=productsResult||[];
-  const completed=sales.filter(x=>x.status==='completed');
+  if(salesResult.error||itemsResult.error){host.innerHTML='<div class="notice">Could not load profit report: '+safeText(salesResult.error?.message||itemsResult.error?.message)+'</div>';if(msg)msg.textContent='Report could not be loaded.';return;}
+  const sales=salesResult.data||[],items=itemsResult.data||[],products=productsResult||[];
+  const ids=new Set(sales.map(s=>s.id));
+  const validItems=items.filter(i=>ids.has(i.sale_id));
+  const missingCosts=validItems.filter(i=>i.unit_cost===null||i.unit_cost===undefined);
+  const costOfGoods=validItems.reduce((sum,i)=>sum+(Number(i.unit_cost||0)*Number(i.quantity||0)),0);
+  const revenue=sales.reduce((sum,s)=>sum+Number(s.total||0),0);
+  const grossProfit=revenue-costOfGoods;
+  const margin=revenue>0?(grossProfit/revenue)*100:0;
   const todayKey=new Date().toLocaleDateString();
-  const today=completed.filter(x=>x.sold_at&&new Date(x.sold_at).toLocaleDateString()===todayKey);
+  const todaySales=sales.filter(s=>s.sold_at&&new Date(s.sold_at).toLocaleDateString()===todayKey);
   const total=arr=>arr.reduce((sum,x)=>sum+Number(x.total||0),0);
   const stockValue=products.reduce((sum,p)=>sum+Number(p.quantity||0)*Number(p.cost_price||0),0);
   const low=products.filter(p=>Number(p.quantity||0)<=Number(p.low_stock_threshold??5));
-  const pending=sales.filter(x=>x.status==='pending_approval');
-  const credit=completed.filter(x=>x.payment_method==='credit'&&x.payment_status!=='paid');
-  const methods=['cash','card','credit'].map(method=>({method,count:completed.filter(x=>x.payment_method===method).length,value:total(completed.filter(x=>x.payment_method===method))}));
-  host.innerHTML='<div class="stats">'+
-    '<div class="stat"><div class="stathead">Today’s completed sales</div><strong>'+money(total(today))+'</strong><small class="muted">'+today.length+' transactions</small></div>'+
-    '<div class="stat"><div class="stathead">All-time completed sales</div><strong>'+money(total(completed))+'</strong><small class="muted">'+completed.length+' transactions</small></div>'+
-    '<div class="stat"><div class="stathead">Stock value at cost</div><strong>'+money(stockValue)+'</strong><small class="muted">'+products.length+' products</small></div>'+
-    '<div class="stat"><div class="stathead">Low-stock products</div><strong>'+low.length+'</strong><small class="muted">At or below alert threshold</small></div></div>'+
-    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment method breakdown</h3><span>Completed sales</span></div>'+
+  const pendingNote='Pending credit approvals are excluded from revenue and profit.';
+  const methods=['cash','card','credit'].map(method=>({method,count:sales.filter(x=>x.payment_method===method).length,value:total(sales.filter(x=>x.payment_method===method))}));
+  const missingNotice=missingCosts.length?'<div class="notice">Warning: '+missingCosts.length+' sold item rows have no saved cost. Profit is understated or incomplete; fill historical costs before relying on this report.</div>':'';
+  host.innerHTML=missingNotice+
+    '<div class="stats">'+
+    '<div class="stat"><div class="stathead">Sales after discounts</div><strong>'+money(revenue)+'</strong><small class="muted">'+sales.length+' completed transactions</small></div>'+
+    '<div class="stat"><div class="stathead">Cost of goods sold</div><strong>'+money(costOfGoods)+'</strong><small class="muted">Based on sale-time costs</small></div>'+
+    '<div class="stat"><div class="stathead">Gross profit</div><strong>'+money(grossProfit)+'</strong><small class="muted">'+margin.toFixed(1)+'% gross margin</small></div>'+
+    '<div class="stat"><div class="stathead">Current stock value</div><strong>'+money(stockValue)+'</strong><small class="muted">'+products.length+' products</small></div></div>'+
+    '<div class="grid2"><div class="card"><div class="cardhead"><h3>Payment method breakdown</h3><span>Selected period</span></div>'+
     '<table><thead><tr><th>Method</th><th>Transactions</th><th>Sales value</th></tr></thead><tbody>'+methods.map(m=>'<tr><td>'+safeText(m.method.toUpperCase())+'</td><td>'+m.count+'</td><td>'+money(m.value)+'</td></tr>').join('')+'</tbody></table></div>'+
-    '<div class="card"><div class="cardhead"><h3>Credit & approvals</h3></div><div class="cartline"><span>Credit sales awaiting approval</span><b>'+pending.length+'</b></div><div class="cartline"><span>Approved credit sales not marked paid</span><b>'+credit.length+'</b></div><p class="muted">These are sale counts, not remaining balances.</p></div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Profit calculation</h3></div><div class="cartline"><span>Sales after discounts</span><b>'+money(revenue)+'</b></div><div class="cartline"><span>Less: cost of goods sold</span><b>'+money(costOfGoods)+'</b></div><div class="cartline"><strong>Gross profit</strong><strong>'+money(grossProfit)+'</strong></div><p class="muted">'+pendingNote+'</p></div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Low-stock watchlist</h3><span>'+low.length+' products</span></div>'+
     (low.length?'<div class="tablecard"><table><thead><tr><th>Product</th><th>Code</th><th>In stock</th><th>Alert at</th></tr></thead><tbody>'+low.map(p=>'<tr><td><b>'+safeText(p.product_name)+'</b></td><td>'+safeText(p.product_code)+'</td><td><span class="badge warn">'+Number(p.quantity||0)+'</span></td><td>'+Number(p.low_stock_threshold??5)+'</td></tr>').join('')+'</tbody></table></div>':'<div class="empty">No products are currently below their alert threshold.</div>')+'</div>'+
-    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Daily cashier & cash summary</h3><input id="cashier-report-date" type="date" value="'+localDateInputValue()+'" onchange="loadCashierPerformance()"></div><div id="cashier-performance-content"><p class="muted">Loading cashier report…</p></div></div>';
-  await loadCashierPerformance();
+    '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Daily cashier & cash summary</h3><input id="cashier-report-date" type="date" value="'+today+'" onchange="loadCashierPerformance()"></div><div id="cashier-performance-content"><p class="muted">Loading cashier report…</p></div></div>';
+  if(msg)msg.textContent='Report updated for '+from+' to '+to+'.';
 }
-
 async function shopsPage(){
   $('#view').innerHTML=heading('PLATFORM ADMIN','Shop management','Create and manage separate BAJAJ shop workspaces. Each shop has its own inventory, customers and sales.')+
   '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Create a shop</h3><span>Platform owner only</span></div>'+
