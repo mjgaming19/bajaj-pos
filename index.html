@@ -70,6 +70,7 @@ body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:no
   </nav></div>
   <div><div class="navlabel">SYSTEM</div><nav class="nav">
     <button data-page="shops"><span class="ico">▣</span>Shop Management</button>
+    <button data-page="subscriptions"><span class="ico">◈</span>Subscriptions & Billing</button>
     <button data-page="users"><span class="ico">♧</span>User Management</button>
     <button data-page="settings"><span class="ico">⚙</span>Settings</button>
   </nav></div>
@@ -240,7 +241,7 @@ async function verifyWorkspace() {
   }
   if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
   if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
-  const permissions = {platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','notifications','pos','shifts','sales','customers']};
+  const permissions = {platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','subscriptions','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','notifications','pos','shifts','sales','customers']};
   const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
   document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
@@ -285,7 +286,7 @@ let customers=[{name:'Nimal Perera',phone:'077 123 4567',balance:3200},{name:'Ka
 const money=n=>'LKR '+Number(n).toLocaleString('en-LK');
 const $=s=>document.querySelector(s);
 function toast(t){let e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2300)}
-function page(p){const permissions={platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({notifications:'Notifications',pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',expenses:'Expenses',reports:'Reports',shops:'Shop Management',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,notifications:notificationsPage,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,expenses:expensesPage,reports:reportsPage,shops:shopsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
+function page(p){const permissions={platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','subscriptions','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','pos','shifts','sales']};const allowed=permissions[currentUserRole]||permissions.pos_user;if(!allowed.includes(p)){toast('Your account does not have access to that section.');return;}document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset-page===p));$('#crumb').textContent=({notifications:'Notifications',pos:'Point of Sale',shifts:'Cashier Shifts',inventory:'Inventory',sales:'Sales History',customers:'Customers & Credit',suppliers:'Suppliers',expenses:'Expenses',reports:'Reports',shops:'Shop Management',subscriptions:'Subscriptions & Billing',users:'User Management',settings:'Settings'})[p]||'Dashboard';$('#sidebar').classList.remove('open');({dashboard:dashboard,notifications:notificationsPage,pos:pos,shifts:shiftsPage,inventory:inventory,sales:salesPage,customers:customersPage,suppliers:suppliersPage,expenses:expensesPage,reports:reportsPage,shops:shopsPage,subscriptions:subscriptionsPage,users:usersPage,settings:settingsPage}[p]||dashboard)(); }
 document.querySelectorAll('.nav button').forEach(b=>b.onclick=()=>page(b.dataset.page));
 $('#menu').onclick=()=>$('#sidebar').classList.toggle('open');
 $('#theme').onclick=()=>{let d=document.documentElement;d.dataset.theme=d.dataset.theme==='dark'?'light':'dark';$('#theme').textContent=d.dataset.theme==='dark'?'☀':'☾'};
@@ -1320,6 +1321,97 @@ async function loadProfitReport(){
   });
   if(msg)msg.textContent='Analytics updated for '+from+' to '+to+'.';
 }
+
+async function subscriptionsPage(){
+  if(!isPlatformAdmin){toast('Only the Main Admin can manage subscriptions.');return;}
+  $('#view').innerHTML=heading('SAAS CONTROL CENTRE','Subscriptions & billing','Manage customer shop plans, free trials, subscription status and plan limits.')+
+    '<div class="stats" id="subscription-summary"><div class="stat"><div class="stathead">Total shops</div><strong>—</strong></div><div class="stat"><div class="stathead">On trial</div><strong>—</strong></div><div class="stat"><div class="stathead">Active</div><strong>—</strong></div><div class="stat"><div class="stathead">Past due / suspended</div><strong>—</strong></div></div>'+
+    '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Subscription plans</h3><span>Set your own LKR pricing before launch</span></div>'+
+    '<form id="plan-create-form" class="formrow" style="align-items:end">'+
+    '<div class="field"><label>Plan name</label><input name="name" required maxlength="60" placeholder="e.g. Business"></div>'+
+    '<div class="field"><label>Plan code (unique)</label><input name="code" required pattern="[a-z0-9-]+" placeholder="e.g. business"></div>'+
+    '<div class="field"><label>Monthly price (LKR)</label><input name="monthly_price" type="number" min="0" step="0.01" value="0" required></div>'+
+    '<div class="field"><label>Yearly price (LKR)</label><input name="yearly_price" type="number" min="0" step="0.01" value="0" required></div>'+
+    '<div class="field"><label>Max users per shop</label><input name="max_users" type="number" min="1" value="5" required></div>'+
+    '<div class="field"><label>Max products per shop</label><input name="max_products" type="number" min="1" value="500" required></div>'+
+    '<div class="field"><label>Max shops per account</label><input name="max_shops" type="number" min="1" value="1" required></div>'+
+    '<button class="primary" type="submit">＋ Create plan</button></form><div id="plan-form-message" class="muted"></div><div id="subscription-plan-list">Loading plans…</div></div>'+
+    '<div class="card"><div class="cardhead"><h3>Shop subscriptions</h3><button class="secondary" onclick="loadSubscriptionManagement()">↻ Refresh</button></div><div id="shop-subscription-list">Loading subscriptions…</div></div>';
+  $('#plan-create-form').addEventListener('submit',createSubscriptionPlan);
+  await loadSubscriptionManagement();
+}
+async function loadSubscriptionManagement(){
+  const planHost=$('#subscription-plan-list'),shopHost=$('#shop-subscription-list');
+  if(!planHost||!shopHost)return;
+  const [plansResult,shopsResult,subsResult]=await Promise.all([
+    db.from('subscription_plans').select('*').order('sort_order').order('name'),
+    db.from('shops').select('id,name,slug,currency').order('name'),
+    db.from('shop_subscriptions').select('*')
+  ]);
+  if(plansResult.error||shopsResult.error||subsResult.error){
+    const error=(plansResult.error||shopsResult.error||subsResult.error).message;
+    shopHost.innerHTML='<div class="notice">Could not load subscription data: '+safeText(error)+'</div>';return;
+  }
+  const plans=plansResult.data||[],shops=shopsResult.data||[],subs=subsResult.data||[];
+  const planById=new Map(plans.map(p=>[p.id,p])),subByShop=new Map(subs.map(x=>[x.shop_id,x]));
+  const trialCount=subs.filter(x=>x.status==='trialing').length,activeCount=subs.filter(x=>x.status==='active').length;
+  const riskCount=subs.filter(x=>['past_due','suspended'].includes(x.status)).length;
+  $('#subscription-summary').innerHTML=[
+    ['Total shops',shops.length],['On trial',trialCount],['Active',activeCount],['Past due / suspended',riskCount]
+  ].map(x=>'<div class="stat"><div class="stathead">'+x[0]+'</div><strong>'+x[1]+'</strong></div>').join('');
+  planHost.innerHTML=plans.length?'<div class="tablecard"><table><thead><tr><th>Plan</th><th>Monthly</th><th>Yearly</th><th>Limits</th><th>Status</th><th>Action</th></tr></thead><tbody>'+
+    plans.map(p=>'<tr><td><b>'+safeText(p.name)+'</b><br><small class="muted">'+safeText(p.code)+'</small></td><td>'+money(p.monthly_price)+'</td><td>'+money(p.yearly_price)+'</td><td>'+p.max_users+' users · '+Number(p.max_products).toLocaleString()+' products · '+p.max_shops+' shops</td><td><span class="badge '+(p.is_active?'':'warn')+'">'+(p.is_active?'Active':'Hidden')+'</span></td><td><button class="secondary" onclick="editSubscriptionPlan(\''+safeText(p.id)+'\')">Edit</button></td></tr>').join('')+
+    '</tbody></table></div>':'<div class="empty">No plans created.</div>';
+  shopHost.innerHTML=shops.length?'<div class="tablecard"><table><thead><tr><th>Shop</th><th>Plan</th><th>Status</th><th>Trial ends</th><th>Billing cycle</th><th>Admin note</th><th>Save</th></tr></thead><tbody>'+
+    shops.map(shop=>{
+      const sub=subByShop.get(shop.id),plan=sub&&planById.get(sub.plan_id);
+      if(!sub)return '<tr><td><b>'+safeText(shop.name)+'</b></td><td colspan="6"><span class="badge warn">No subscription record — refresh or check database</span></td></tr>';
+      const dateValue=sub.trial_ends_at?new Date(sub.trial_ends_at).toISOString().slice(0,16):'';
+      return '<tr><td><b>'+safeText(shop.name)+'</b><br><small class="muted">'+safeText(shop.slug)+'</small></td>'+
+        '<td><select id="sub-plan-'+shop.id+'" class="search" style="min-width:130px">'+plans.map(p=>'<option value="'+p.id+'" '+(p.id===sub.plan_id?'selected':'')+'>'+safeText(p.name)+'</option>').join('')+'</select><small class="muted" style="display:block">'+(plan?plan.max_users+' users · '+Number(plan.max_products).toLocaleString()+' products':'Plan unavailable')+'</small></td>'+
+        '<td><select id="sub-status-'+shop.id+'" class="search" style="min-width:120px">'+['trialing','active','past_due','cancelled','suspended'].map(st=>'<option value="'+st+'" '+(st===sub.status?'selected':'')+'>'+st.replace('_',' ')+'</option>').join('')+'</select></td>'+
+        '<td><input id="sub-trial-'+shop.id+'" class="search" style="min-width:175px" type="datetime-local" value="'+dateValue+'"></td>'+
+        '<td><select id="sub-cycle-'+shop.id+'" class="search"><option value="monthly" '+(sub.billing_cycle==='monthly'?'selected':'')+'>Monthly</option><option value="yearly" '+(sub.billing_cycle==='yearly'?'selected':'')+'>Yearly</option></select></td>'+
+        '<td><input id="sub-note-'+shop.id+'" class="search" style="min-width:150px" maxlength="500" placeholder="Internal note" value="'+safeText(sub.admin_note||'')+'"></td>'+
+        '<td><button class="primary" onclick="saveShopSubscription(\''+safeText(shop.id)+'\')">Save</button></td></tr>';
+    }).join('')+'</tbody></table></div>':'<div class="empty">No shops found.</div>';
+}
+async function createSubscriptionPlan(event){
+  event.preventDefault();const form=event.currentTarget,msg=$('#plan-form-message');
+  const v=Object.fromEntries(new FormData(form).entries());
+  const code=String(v.code||'').trim().toLowerCase();
+  if(!/^[a-z0-9-]+$/.test(code)){msg.textContent='Use lowercase letters, numbers and hyphens for the plan code.';return;}
+  const payload={name:String(v.name).trim(),code,monthly_price:Number(v.monthly_price),yearly_price:Number(v.yearly_price),max_users:Number(v.max_users),max_products:Number(v.max_products),max_shops:Number(v.max_shops),description:'Custom plan managed by the platform owner.',features:{pos:true,inventory:true,reports:true,customers:true,suppliers:true,expenses:true,advanced_analytics:true},is_active:true,sort_order:10};
+  const {error}=await db.from('subscription_plans').insert(payload);
+  if(error){msg.textContent='Could not create plan: '+error.message;return;}
+  form.reset();msg.textContent='Plan created.';await loadSubscriptionManagement();toast('Subscription plan created.');
+}
+async function editSubscriptionPlan(id){
+  const {data:p,error}=await db.from('subscription_plans').select('*').eq('id',id).single();
+  if(error){toast('Could not load plan: '+error.message);return;}
+  const monthly=prompt('Monthly price in LKR:',p.monthly_price);if(monthly===null)return;
+  const yearly=prompt('Yearly price in LKR:',p.yearly_price);if(yearly===null)return;
+  const users=prompt('Maximum users per shop:',p.max_users);if(users===null)return;
+  const products=prompt('Maximum products per shop:',p.max_products);if(products===null)return;
+  const shops=prompt('Maximum shops per account:',p.max_shops);if(shops===null)return;
+  const active=confirm('Keep this plan active? Choose Cancel to hide it from new assignments.');
+  const values={monthly_price:Number(monthly),yearly_price:Number(yearly),max_users:Number(users),max_products:Number(products),max_shops:Number(shops),is_active:active};
+  if(Object.values(values).some((v,i)=>i<5&&(!Number.isFinite(v)||v<0))||values.max_users<1||values.max_products<1||values.max_shops<1){alert('Enter valid non-negative prices and positive limits.');return;}
+  const {error:updateError}=await db.from('subscription_plans').update(values).eq('id',id);
+  if(updateError){toast('Could not update plan: '+updateError.message);return;}
+  await loadSubscriptionManagement();toast('Plan updated.');
+}
+async function saveShopSubscription(shopId){
+  const plan_id=$('#sub-plan-'+shopId).value,status=$('#sub-status-'+shopId).value;
+  const trialValue=$('#sub-trial-'+shopId).value;
+  const trial_ends_at=trialValue?new Date(trialValue).toISOString():null;
+  const billing_cycle=$('#sub-cycle-'+shopId).value,admin_note=$('#sub-note-'+shopId).value.trim();
+  if(!trial_ends_at){toast('Set a valid trial end date.');return;}
+  const {error}=await db.from('shop_subscriptions').update({plan_id,status,trial_ends_at,billing_cycle,admin_note}).eq('shop_id',shopId);
+  if(error){toast('Could not save subscription: '+error.message);return;}
+  toast('Subscription updated.');await loadSubscriptionManagement();
+}
+
 async function shopsPage(){
   $('#view').innerHTML=heading('PLATFORM ADMIN','Shop management','Create and manage separate BAJAJ shop workspaces. Each shop has its own inventory, customers and sales.')+
   '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Create a shop</h3><span>Platform owner only</span></div>'+
