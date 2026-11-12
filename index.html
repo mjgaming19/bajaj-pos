@@ -324,6 +324,7 @@ async function notificationsPage(){
   const paidBySale=new Map();
   (paymentsResult.data||[]).forEach(p=>paidBySale.set(p.sale_id,(paidBySale.get(p.sale_id)||0)+Number(p.amount||0)));
   const customerById=new Map((customersResult.data||[]).map(c=>[c.id,c]));
+  const activeOverdueSales=overdueSales.filter(s=>Number(s.total||0)-Number(s.returned_amount||0)-(paidBySale.get(s.id)||0)>0);
   const notes=notesResult.data||[];
   const unread=notes.filter(n=>!n.read_at).length;
   const noteRows=notes.length?notes.map(n=>'<div class="cartline"><div style="flex:1"><b>'+safeText(n.title)+'</b><div class="muted">'+safeText(n.message)+'</div><small class="muted">'+safeText(new Date(n.created_at).toLocaleString())+'</small></div><div>'+(!n.read_at?'<button class="secondary" onclick="markNotificationRead(\\''+safeText(n.id)+'\\')">Mark read</button>':'<span class="badge">Read</span>')+'</div></div>').join(''):'<div class="empty">No active stock alerts. You’re all caught up.</div>';
@@ -331,7 +332,7 @@ async function notificationsPage(){
     const customer=customerById.get(s.customer_id);
     return '<div class="cartline"><div><b>'+safeText(s.receipt_no||String(s.id).slice(0,8))+'</b><div class="muted">'+safeText(customer?.name||'Customer not linked')+' · '+safeText(s.sold_at?new Date(s.sold_at).toLocaleDateString():'')+'</div></div><b>'+money(Number(s.total||0))+'</b></div>';
   }).join(''):'<div class="empty">No credit sales are waiting for approval.</div>';
-  const overdueRows=overdueSales.map(s=>{
+  const overdueRows=activeOverdueSales.map(s=>{
     const paid=paidBySale.get(s.id)||0,remaining=Math.max(0,Number(s.total||0)-Number(s.returned_amount||0)-paid);
     if(remaining<=0)return '';
     const customer=customerById.get(s.customer_id);
@@ -341,8 +342,8 @@ async function notificationsPage(){
   host.innerHTML='<div class="stats">'+
     '<div class="stat"><div class="stathead">Unread stock alerts</div><strong>'+unread+'</strong><small>Active notifications</small></div>'+
     '<div class="stat"><div class="stathead">Pending approvals</div><strong>'+pendingSales.length+'</strong><small>Credit sales awaiting review</small></div>'+
-    '<div class="stat"><div class="stathead">Overdue credit sales</div><strong>'+overdueSales.length+'</strong><small>Older than '+overdueDays+' days</small></div>'+
-    '<div class="stat"><div class="stathead">Outstanding overdue</div><strong>'+money(overdueSales.reduce((sum,s)=>sum+Math.max(0,Number(s.total||0)-Number(s.returned_amount||0)-(paidBySale.get(s.id)||0)),0))+'</strong><small>After repayments and returns</small></div></div>'+
+    '<div class="stat"><div class="stathead">Overdue credit sales</div><strong>'+activeOverdueSales.length+'</strong><small>Older than '+overdueDays+' days</small></div>'+
+    '<div class="stat"><div class="stathead">Outstanding overdue</div><strong>'+money(activeOverdueSales.reduce((sum,s)=>sum+Math.max(0,Number(s.total||0)-Number(s.returned_amount||0)-(paidBySale.get(s.id)||0)),0))+'</strong><small>After repayments and returns</small></div></div>'+
     '<div class="grid2"><div class="card"><div class="cardhead"><h3>Stock alerts</h3><span>'+notes.length+' active</span></div>'+noteRows+'</div>'+
     '<div class="card"><div class="cardhead"><h3>Pending credit approvals</h3><button class="secondary" onclick="page(\\'sales\\')">Review sales →</button></div>'+pendingRows+'</div></div>'+
     '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Overdue customer credit</h3><span>30+ days outstanding</span></div>'+ (overdueRows||'<div class="empty">No overdue credit balances found.</div>') +'</div>';
