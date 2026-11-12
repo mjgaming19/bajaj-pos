@@ -26,6 +26,7 @@ alter table public.sales add column if not exists shift_id uuid references publi
 create index if not exists sales_shift_id_idx on public.sales(shift_id);
 
 alter table public.cashier_shifts enable row level security;
+grant select on public.cashier_shifts to authenticated;
 drop policy if exists "cashier shifts read own or managers" on public.cashier_shifts;
 create policy "cashier shifts read own or managers" on public.cashier_shifts
 for select to authenticated using (
