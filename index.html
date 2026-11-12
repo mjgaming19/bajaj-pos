@@ -975,7 +975,7 @@ async function loadProfitReport(){
     db.from('sale_items').select('sale_id,product_id,product_name,product_code,quantity,unit_price,unit_cost,line_total,sales!inner(shop_id,status,sold_at)').eq('sales.shop_id',currentShop.id).eq('sales.status','completed').gte('sales.sold_at',start).lt('sales.sold_at',end),
     loadLiveInventory(),
     db.from('sale_returns').select('id,sale_id,refund_amount,created_at').eq('shop_id',currentShop.id).gte('created_at',start).lt('created_at',end),
-    db.from('sale_return_items').select('return_id,product_id,quantity,unit_refund_amount,restocked,sale_items!inner(unit_cost)').gte('sale_returns.created_at',start).lt('sale_returns.created_at',end).eq('sale_returns.shop_id',currentShop.id)
+    db.from('sale_return_items').select('return_id,product_id,quantity,unit_refund_amount,restocked,sale_returns!inner(shop_id,created_at),sale_items!inner(unit_cost)').gte('sale_returns.created_at',start).lt('sale_returns.created_at',end).eq('sale_returns.shop_id',currentShop.id)
   ]);
   if(salesResult.error||itemsResult.error||returnsResult.error||returnItemsResult.error){host.innerHTML='<div class="notice">Could not load analytics: '+safeText(salesResult.error?.message||itemsResult.error?.message||returnsResult.error?.message||returnItemsResult.error?.message)+'</div>';if(msg)msg.textContent='Report could not be loaded.';return;}
   const sales=salesResult.data||[],items=itemsResult.data||[],products=productsResult||[],returns=returnsResult.data||[],returnItems=returnItemsResult.data||[];
