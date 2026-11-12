@@ -612,6 +612,9 @@ async function loadReturnableItems(){
   const saleId=$('#return-sale')?.value,host=$('#return-items-list');
   if(!host)return;
   if(!saleId){host.textContent='Select a sale to view returnable items.';return;}
+  const selectedSale=liveSales.find(s=>String(s.id)===String(saleId));
+  const methodSelect=$('#return-method');
+  if(methodSelect&&selectedSale)methodSelect.innerHTML=selectedSale.payment_method==='credit'?'<option value="credit_adjustment">Reduce outstanding credit</option>':selectedSale.payment_method==='card'?'<option value="card">Card refund</option>':'<option value="cash">Cash refund</option>';
   host.textContent='Loading sale items…';
   const [{data:items,error:itemsError},{data:prior,error:priorError}]=await Promise.all([
     db.from('sale_items').select('id,product_name,product_code,quantity,unit_price,line_total').eq('sale_id',saleId),
@@ -967,13 +970,15 @@ async function loadProfitReport(){
   if(!from||!to||from>to){if(msg)msg.textContent='Choose a valid date range.';return;}
   if(msg)msg.textContent='Loading sales and product analytics…';
   const start=new Date(from+'T00:00:00').toISOString(),end=new Date(new Date(to+'T00:00:00').getTime()+86400000).toISOString();
-  const [salesResult,itemsResult,productsResult]=await Promise.all([
+  const [salesResult,itemsResult,productsResult,returnsResult,returnItemsResult]=await Promise.all([
     db.from('sales').select('id,total,subtotal,discount,status,sold_at,payment_method,payment_status').eq('shop_id',currentShop.id).eq('status','completed').gte('sold_at',start).lt('sold_at',end).order('sold_at',{ascending:false}),
     db.from('sale_items').select('sale_id,product_id,product_name,product_code,quantity,unit_price,unit_cost,line_total,sales!inner(shop_id,status,sold_at)').eq('sales.shop_id',currentShop.id).eq('sales.status','completed').gte('sales.sold_at',start).lt('sales.sold_at',end),
-    loadLiveInventory()
+    loadLiveInventory(),
+    db.from('sale_returns').select('id,sale_id,refund_amount,created_at').eq('shop_id',currentShop.id).gte('created_at',start).lt('created_at',end),
+    db.from('sale_return_items').select('return_id,product_id,quantity,unit_refund_amount,restocked,sale_items!inner(unit_cost)').gte('sale_returns.created_at',start).lt('sale_returns.created_at',end).eq('sale_returns.shop_id',currentShop.id)
   ]);
-  if(salesResult.error||itemsResult.error){host.innerHTML='<div class="notice">Could not load analytics: '+safeText(salesResult.error?.message||itemsResult.error?.message)+'</div>';if(msg)msg.textContent='Report could not be loaded.';return;}
-  const sales=salesResult.data||[],items=itemsResult.data||[],products=productsResult||[];
+  if(salesResult.error||itemsResult.error||returnsResult.error||returnItemsResult.error){host.innerHTML='<div class="notice">Could not load analytics: '+safeText(salesResult.error?.message||itemsResult.error?.message||returnsResult.error?.message||returnItemsResult.error?.message)+'</div>';if(msg)msg.textContent='Report could not be loaded.';return;}
+  const sales=salesResult.data||[],items=itemsResult.data||[],products=productsResult||[],returns=returnsResult.data||[],returnItems=returnItemsResult.data||[];
   const saleById=new Map(sales.map(s=>[s.id,s]));
   const validItems=items.filter(i=>saleById.has(i.sale_id));
   const missingCosts=validItems.filter(i=>i.unit_cost===null||i.unit_cost===undefined);
@@ -1002,13 +1007,40 @@ async function loadProfitReport(){
     const mon=monthlyMap.get(month)||{month,revenue:0,cost:0,profit:0,transactions:new Set()};
     mon.revenue+=netLine;mon.cost+=lineCost;mon.profit+=lineProfit;mon.transactions.add(sale.id);monthlyMap.set(month,mon);
   }
-  const revenue=sales.reduce((sum,s)=>sum+Number(s.total||0),0);
+  const returnById=new Map(returns.map(r=>[r.id,r]));
+  const refundBySale=new Map();
+  let totalRefunds=0,returnedCost=0;
+  for(const r of returns){totalRefunds+=Number(r.refund_amount||0);refundBySale.set(r.sale_id,(refundBySale.get(r.sale_id)||0)+Number(r.refund_amount||0));}
+  for(const ri of returnItems){
+    const ret=returnById.get(ri.return_id);if(!ret)continue;
+    const key=String(ri.product_id);
+    const p=productMap.get(key);
+    const qty=Number(ri.quantity||0),lineRefund=Number(ri.unit_refund_amount||0)*qty;
+    const unitCost=Number(ri.sale_items?.unit_cost||0);
+    const lineReturnedCost=ri.restocked?unitCost*qty:0;
+    returnedCost+=lineReturnedCost;
+    if(p){p.units=Math.max(0,p.units-qty);p.revenue-=lineRefund;p.cost-=lineReturnedCost;p.profit=p.revenue-p.cost;}
+    const date=localDateInputValue(new Date(ret.created_at));
+    const day=dailyMap.get(date)||{date,revenue:0,cost:0,profit:0,transactions:new Set()};
+    day.cost-=lineReturnedCost;day.profit=day.revenue-day.cost;dailyMap.set(date,day);
+    const month=date.slice(0,7),mon=monthlyMap.get(month)||{month,revenue:0,cost:0,profit:0,transactions:new Set()};
+    mon.cost-=lineReturnedCost;mon.profit=mon.revenue-mon.cost;monthlyMap.set(month,mon);
+  }
+  for(const r of returns){
+    const date=localDateInputValue(new Date(r.created_at)),month=date.slice(0,7);
+    const day=dailyMap.get(date)||{date,revenue:0,cost:0,profit:0,transactions:new Set()};
+    day.revenue-=Number(r.refund_amount||0);day.profit=day.revenue-day.cost;dailyMap.set(date,day);
+    const mon=monthlyMap.get(month)||{month,revenue:0,cost:0,profit:0,transactions:new Set()};
+    mon.revenue-=Number(r.refund_amount||0);mon.profit=mon.revenue-mon.cost;monthlyMap.set(month,mon);
+  }
+  costOfGoods=Math.max(0,costOfGoods-returnedCost);
+  const revenue=sales.reduce((sum,s)=>sum+Number(s.total||0),0)-totalRefunds;
   const grossProfit=revenue-costOfGoods;
   const margin=revenue>0?(grossProfit/revenue)*100:0;
   const stockValue=products.reduce((sum,p)=>sum+Number(p.quantity||0)*Number(p.cost_price||0),0);
   const low=products.filter(p=>Number(p.quantity||0)<=Number(p.low_stock_threshold??5));
   const pendingNote='Pending credit approvals and voided sales are excluded.';
-  const methods=['cash','card','credit'].map(method=>({method,count:sales.filter(x=>x.payment_method===method).length,value:sales.filter(x=>x.payment_method===method).reduce((n,x)=>n+Number(x.total||0),0)}));
+  const methods=['cash','card','credit'].map(method=>({method,count:sales.filter(x=>x.payment_method===method).length,value:sales.filter(x=>x.payment_method===method).reduce((n,x)=>n+Number(x.total||0)-Number(refundBySale.get(x.id)||0),0)}));
   const topProfit=[...productMap.values()].sort((a,b)=>b.profit-a.profit).slice(0,10);
   const topUnits=[...productMap.values()].sort((a,b)=>b.units-a.units).slice(0,10);
   const daily=[...dailyMap.values()].sort((a,b)=>a.date.localeCompare(b.date));
