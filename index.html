@@ -1353,6 +1353,12 @@ async function loadSubscriptionManagement(){
     shopHost.innerHTML='<div class="notice">Could not load subscription data: '+safeText(error)+'</div>';return;
   }
   const plans=plansResult.data||[],shops=shopsResult.data||[],subs=subsResult.data||[];
+  const now=Date.now();
+  const expiredTrials=subs.filter(x=>x.status==='trialing'&&x.trial_ends_at&&new Date(x.trial_ends_at).getTime()<now);
+  for(const expired of expiredTrials){
+    const {error}=await db.from('shop_subscriptions').update({status:'past_due'}).eq('id',expired.id);
+    if(!error)expired.status='past_due';
+  }
   const planById=new Map(plans.map(p=>[p.id,p])),subByShop=new Map(subs.map(x=>[x.shop_id,x]));
   const usageByShop=new Map(await Promise.all(shops.map(async shop=>{
     const [products,members]=await Promise.all([
