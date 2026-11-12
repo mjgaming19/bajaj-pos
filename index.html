@@ -464,6 +464,11 @@ async function checkout() {
   const paymentMethod=$('#payment').value,customerId=$('#pos-customer').value||null;
   const subtotal=getCartSubtotal(),discount=getDiscount(),total=Math.max(0,subtotal-discount);
   if(paymentMethod==='credit'&&!customerId){message.textContent='Select a registered customer before creating a credit sale.';toggleCreditCustomer();return;}
+  if(paymentMethod==='cash'){
+    const {data:openShift,error:shiftError}=await db.from('cashier_shifts').select('id').eq('shop_id',currentShop.id).eq('cashier_id',currentUser.id).eq('status','open').maybeSingle();
+    if(shiftError){message.textContent='Could not verify your cashier shift: '+shiftError.message;return;}
+    if(!openShift){message.textContent='Open a cashier shift before accepting cash. Go to Cashier Shifts to enter your opening cash.';return;}
+  }
   if(discount>subtotal){message.textContent='Discount cannot exceed the subtotal.';return;}
   if(paymentMethod==='cash'){
     const tendered=Number($('#cash-tendered')?.value||0);
@@ -511,6 +516,7 @@ function shareReceiptWhatsApp(){
 async function salesPage(){
   $('#view').innerHTML=heading('TRANSACTIONS','Sales & credit management','Live sales history, credit approvals and customer repayments.')+
   '<div class="toolbar"><button class="secondary" onclick="loadLiveSales()">↻ Refresh</button><input class="search" id="sales-search" placeholder="Search receipt, customer or status…" oninput="filterLiveSales()"></div>'+
+  '<div class="toolbar"><div class="field"><label>From date</label><input class="search" id="sales-from" type="date" onchange="filterLiveSales()"></div><div class="field"><label>To date</label><input class="search" id="sales-to" type="date" onchange="filterLiveSales()"></div><div class="field"><label>Payment method</label><select class="search" id="sales-method" onchange="filterLiveSales()"><option value="">All methods</option><option value="cash">Cash</option><option value="card">Card</option><option value="credit">Credit</option></select></div><div class="field"><label>Sale status</label><select class="search" id="sales-status" onchange="filterLiveSales()"><option value="">All statuses</option><option value="completed">Completed</option><option value="pending_approval">Pending approval</option><option value="rejected">Rejected</option><option value="voided">Voided</option></select></div></div>'+
   '<div class="card" style="margin-bottom:16px"><div class="cardhead"><h3>Pending credit approvals</h3><span id="pending-count">Loading…</span></div><div id="pending-credit-list" class="muted">Loading pending credit sales…</div></div>'+
   '<div class="card"><div class="cardhead"><h3>All transactions</h3><span id="sales-count">Loading…</span></div><div id="live-sales-table" class="tablecard">Loading sales…</div></div>'+
   '<div class="card" style="margin-top:16px"><div class="cardhead"><h3>Record a credit repayment</h3></div><div class="formrow"><div class="field"><label>Credit sale</label><select id="repayment-sale"><option value="">Select an outstanding credit sale</option></select></div><div class="field"><label>Amount (LKR)</label><input id="repayment-amount" type="number" min="0.01" step="0.01" placeholder="Amount received"></div><div class="field"><label>Payment method</label><select id="repayment-method"><option value="cash">Cash</option><option value="card">Card</option></select></div><button class="primary" onclick="submitRepayment()">Record repayment</button></div><div id="repayment-message" class="muted"></div></div>';
@@ -537,7 +543,12 @@ async function loadLiveSales(){
 function filterLiveSales(){
   const target=$('#live-sales-table');if(!target)return;
   const q=($('#sales-search')?.value||'').toLowerCase();
-  const rows=liveSales.filter(s=>(String(saleLabel(s))+' '+customerLabel(s.customer_id)+' '+String(s.status)+' '+String(s.payment_status||'')).toLowerCase().includes(q));
+  const from=$('#sales-from')?.value||'',to=$('#sales-to')?.value||'',method=$('#sales-method')?.value||'',status=$('#sales-status')?.value||'';
+  const rows=liveSales.filter(s=>{
+    const haystack=(String(saleLabel(s))+' '+customerLabel(s.customer_id)+' '+String(s.status)+' '+String(s.payment_status||'')).toLowerCase();
+    const date=s.sold_at?new Date(s.sold_at).toISOString().slice(0,10):'';
+    return haystack.includes(q)&&(!from||date>=from)&&(!to||date<=to)&&(!method||s.payment_method===method)&&(!status||s.status===status);
+  });
   $('#sales-count').textContent=rows.length+' transactions';
   target.innerHTML=rows.length?'<table><thead><tr><th>Receipt</th><th>Customer</th><th>Date</th><th>Total</th><th>Sale status</th><th>Payment</th><th>Actions</th></tr></thead><tbody>'+rows.map(s=>{
     const action=s.status==='completed'?'<button class="danger" onclick="voidSale(\''+safeText(s.id)+'\')">Cancel / refund</button>':s.status==='pending_approval'?'<button class="danger" onclick="rejectCreditSale(\''+safeText(s.id)+'\')">Reject</button>':'—';
