@@ -6,6 +6,7 @@
 - [x] Row Level Security is enabled on all 25 public application tables.
 - [x] Anonymous role has no direct table privileges on the public application tables.
 - [x] Internal trigger functions cannot be invoked directly by anon or authenticated API roles.
+- [x] SECURITY DEFINER database functions use a fixed `search_path`; app RPCs remain available only to authenticated users where required.
 - [x] Subscription plan and shop-subscription records exist.
 - [x] Database triggers enforce the configured per-shop product and user limits.
 - [x] `invite-shop-user` Edge Function is deployed and JWT verification is enabled.
@@ -56,6 +57,7 @@ Run these using separate test accounts and test shops before onboarding real cus
 
 ## Production setup still required
 - Enable Supabase leaked-password protection in **Authentication → Security and Protection**.
+- Review the remaining Supabase security-advisor warnings for authenticated SECURITY DEFINER RPCs function-by-function before onboarding paying customers.
 - Set real Starter/Professional/custom plan prices in the Main Admin subscription screen.
 - Connect a payment provider and implement verified payment webhooks before charging subscriptions. The current subscription screen records plans and statuses; it does not collect payments or run automatic recurring billing.
 - Confirm the production domain, Supabase Auth redirect URLs, email templates and invitation delivery.
