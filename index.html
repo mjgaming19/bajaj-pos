@@ -47,6 +47,11 @@ table{width:100%;border-collapse:collapse}th{text-align:left;color:var(--muted);
 .auth-card label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px}
 .auth-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel2);color:var(--text)}
 .auth-error{color:var(--red);font-size:12px;min-height:18px;margin-top:10px}
+.auth-card #login-button{min-height:44px;display:flex;align-items:center;justify-content:center;gap:10px;transition:opacity .2s,transform .2s}
+.auth-card #login-button:disabled{opacity:.78;cursor:wait}
+.auth-spinner{width:16px;height:16px;border:2px solid rgba(255,255,255,.38);border-top-color:#fff;border-radius:50%;display:inline-block;animation:authSpin .7s linear infinite}
+@keyframes authSpin{to{transform:rotate(360deg)}}
+.auth-card input:disabled{opacity:.65;cursor:wait}
 body:not(.authenticated) .app,body:not(.authenticated) .toast{display:none}
 body.authenticated #auth-screen{display:none}
 body.authenticated .nav button:disabled{opacity:.4;pointer-events:none;cursor:not-allowed}
@@ -319,15 +324,38 @@ document.querySelector('#login-form').addEventListener('submit', async (event) =
   event.preventDefault();
   const button = document.querySelector('#login-button');
   const errorBox = document.querySelector('#auth-error');
-  button.disabled = true; button.textContent = 'Signing in…'; errorBox.textContent = '';
-  const { data, error } = await db.auth.signInWithPassword({
-    email: document.querySelector('#login-email').value.trim(),
-    password: document.querySelector('#login-password').value
-  });
-  button.disabled = false; button.textContent = 'Sign in';
-  if (error) { errorBox.textContent = error.message; return; }
-  currentUser = data.user;
-  await verifyWorkspace();
+  if (button.disabled) return;
+
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.innerHTML = '<span class="auth-spinner" aria-hidden="true"></span> Signing in…';
+  errorBox.textContent = '';
+  errorBox.setAttribute('role', 'alert');
+
+  try {
+    const { data, error } = await db.auth.signInWithPassword({
+      email: document.querySelector('#login-email').value.trim(),
+      password: document.querySelector('#login-password').value
+    });
+    if (error) {
+      errorBox.textContent = error.message;
+      return;
+    }
+    currentUser = data.user;
+    await verifyWorkspace();
+    if (document.body.classList.contains('authenticated')) {
+      button.innerHTML = 'Signed in ✓';
+    }
+  } catch (err) {
+    console.error('BAJAJ sign-in error:', err);
+    errorBox.textContent = err?.message || 'Unable to sign in right now. Please check your connection and try again.';
+  } finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    if (!document.body.classList.contains('authenticated')) {
+      button.textContent = 'Sign in';
+    }
+  }
 });
 
 document.querySelector('#logout').addEventListener('click', async () => {
