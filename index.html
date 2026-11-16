@@ -308,13 +308,18 @@ async function verifyWorkspace() {
     currentShop = shops.find(s => s.id === selected?.shop_id) || null;
   }
   if (!currentShop) currentShop = shops.find(s => s.slug === 'bajaj') || shops[0] || null;
-  if (!currentShop) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
+  if (!currentShop && !isPlatformAdmin) { errorBox.textContent = 'No accessible shop was found for this account.'; return; }
   const permissions = {platform_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','shops','subscriptions','users','settings'],sub_admin:['dashboard','notifications','pos','shifts','inventory','sales','customers','suppliers','expenses','reports','users','settings'],pos_user:['dashboard','notifications','pos','shifts','sales','customers']};
   const allowed = permissions[currentUserRole] || permissions.pos_user;
   document.body.classList.add('authenticated');
   document.querySelectorAll('.nav button').forEach(button => { button.disabled = !allowed.includes(button.dataset.page); button.hidden = !allowed.includes(button.dataset.page); });
   document.querySelector('#signed-in-name').textContent = currentUser.email || 'BAJAJ User';
   document.querySelector('.sidefoot strong').textContent = isPlatformAdmin ? 'Main Admin · Connected' : (currentUserRole === 'sub_admin' ? 'Sub-admin · Connected' : 'POS User · Connected');
+  if (!currentShop && isPlatformAdmin) {
+    document.querySelector('.sidefoot span').textContent = 'No shop created yet · Supabase connected';
+    await page('shops');
+    return;
+  }
   document.querySelector('.sidefoot span').textContent = currentShop.name + ' · Supabase connected';
   await page('dashboard');
   await loadNotificationBadge();
